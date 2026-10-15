@@ -1,8 +1,6 @@
+
 /* eslint-disable react-hooks/set-state-in-effect */
-
 "use client";
-
-
 
 import {
   useCallback,
@@ -15,6 +13,9 @@ import type { FormEvent } from "react";
 import InstallButton from "./components/InstallButton";
 
 type Theme = "dark" | "light";
+type SortBy = "name" | "stock";
+type StockAction = "add" | "sold";
+type ToastType = "success" | "error" | "info";
 
 type Partner = {
   id: string;
@@ -31,7 +32,7 @@ type StockHistory = {
   id: string;
   partnerId: string;
   storeName: string;
-  type: "add" | "sold";
+  type: StockAction;
   amount: number;
   note: string;
   stockBefore: number;
@@ -39,11 +40,21 @@ type StockHistory = {
   createdAt: string;
 };
 
-type SortBy = "name" | "stock";
-type StockAction = "add" | "sold";
-type ToastType = "success" | "error" | "info";
+type PartnerForm = {
+  storeName: string;
+  owner: string;
+  phone: string;
+  address: string;
+};
 
 const PAGE_SIZE = 6;
+
+const EMPTY_FORM: PartnerForm = {
+  storeName: "",
+  owner: "",
+  phone: "",
+  address: "",
+};
 
 const fmt = (n: number) => n.toLocaleString("id-ID");
 
@@ -178,6 +189,8 @@ export default function Home() {
   const [saving, setSaving] = useState(false);
 
   const [showAdd, setShowAdd] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editForm, setEditForm] = useState<PartnerForm>(EMPTY_FORM);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -229,12 +242,38 @@ export default function Home() {
     if (!notice) return;
 
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setNotice("");
+      if (event.key === "Escape") {
+        if (noticeTimer.current) clearTimeout(noticeTimer.current);
+        setNotice("");
+      }
     }
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [notice]);
+
+  useEffect(() => {
+    if (!showAdd && !showEdit && !selected && !confirmDelete) return;
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape" || saving) return;
+
+      if (confirmDelete) {
+        setConfirmDelete(false);
+      } else if (showEdit) {
+        setShowEdit(false);
+        setError("");
+      } else if (showAdd) {
+        setShowAdd(false);
+        setError("");
+      } else if (selected) {
+        closeDetail();
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showAdd, showEdit, selected, confirmDelete, saving]);
 
   const loadHistory = useCallback(async (partnerId: string) => {
     setHistoryLoading(true);
@@ -305,8 +344,9 @@ export default function Home() {
     const phone = cleanText(form.get("phone"));
     const address = cleanText(form.get("address"));
 
-    if (!storeName || !owner || !phone || !address) {
-      setError("Lengkapi semua informasi toko.");
+    // Hanya nama toko yang wajib diisi.
+    if (!storeName) {
+      setError("Nama toko wajib diisi.");
       return;
     }
 
@@ -316,7 +356,7 @@ export default function Home() {
       phone.length > 30 ||
       address.length > 300
     ) {
-      setError("Nama, pemilik, telepon, atau alamat terlalu panjang.");
+      setError("Periksa kembali panjang informasi yang dimasukkan.");
       return;
     }
 
@@ -332,10 +372,78 @@ export default function Home() {
       setShowAdd(false);
       setPage(1);
       setSearch("");
+      setError("");
       flash("Toko berhasil ditambahkan.");
     } catch (err) {
       console.error("Gagal menambahkan toko:", err);
       setError(err instanceof Error ? err.message : "Gagal menyimpan toko.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openEditPartner() {
+    if (!selected || saving) return;
+
+    setEditForm({
+      storeName: selected.storeName ?? "",
+      owner: selected.owner ?? "",
+      phone: selected.phone ?? "",
+      address: selected.address ?? "",
+    });
+
+    setError("");
+    setShowEdit(true);
+  }
+
+  async function savePartnerInfo(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!selected || saving) return;
+
+    const storeName = editForm.storeName.trim();
+    const owner = editForm.owner.trim();
+    const phone = editForm.phone.trim();
+    const address = editForm.address.trim();
+
+    if (!storeName) {
+      setError("Nama toko wajib diisi.");
+      return;
+    }
+
+    if (
+      storeName.length > 100 ||
+      owner.length > 100 ||
+      phone.length > 30 ||
+      address.length > 300
+    ) {
+      setError("Periksa kembali panjang informasi yang dimasukkan.");
+      return;
+    }
+
+    const partnerId = selected.id;
+    setSaving(true);
+    setError("");
+
+    try {
+      await apiRequest<{ success: boolean }>(
+        `/api/partners/${encodeURIComponent(partnerId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ storeName, owner, phone, address }),
+        }
+      );
+
+      await refreshPartners();
+      setShowEdit(false);
+      setError("");
+      flash("Informasi toko berhasil diperbarui.");
+    } catch (err) {
+      console.error("Gagal mengedit informasi toko:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Gagal memperbarui informasi toko."
+      );
     } finally {
       setSaving(false);
     }
@@ -378,6 +486,7 @@ export default function Home() {
       await Promise.all([refreshPartners(), loadHistory(partnerId)]);
       setAmount("");
       setNote("");
+      setError("");
 
       flash(`Stok tersimpan. Stok sekarang ${fmt(result.stockAfter)} unit.`);
     } catch (err) {
@@ -408,6 +517,7 @@ export default function Home() {
       setSelectedId(null);
       setHistory([]);
       setHistoryError("");
+      setError("");
       flash(`${storeName} berhasil dihapus.`);
     } catch (err) {
       console.error("Gagal menghapus toko:", err);
@@ -432,6 +542,7 @@ export default function Home() {
     if (saving) return;
     setSelectedId(null);
     setConfirmDelete(false);
+    setShowEdit(false);
     setError("");
   }
 
@@ -445,7 +556,6 @@ export default function Home() {
 
       document.documentElement.dataset.theme = initialTheme;
       document.documentElement.style.colorScheme = initialTheme;
-
       setTheme(initialTheme);
     } catch {
       setTheme("dark");
@@ -464,7 +574,7 @@ export default function Home() {
     try {
       localStorage.setItem("kt-theme", nextTheme);
     } catch {
-      // Tema tetap berubah untuk sesi ini meskipun penyimpanan gagal.
+      // Tema tetap berubah untuk sesi ini.
     }
   }
 
@@ -521,16 +631,8 @@ export default function Home() {
 
         .kt-app {
           background-image:
-            radial-gradient(
-              ellipse at 10% 0%,
-              rgba(37, 99, 235, 0.09),
-              transparent 34%
-            ),
-            radial-gradient(
-              ellipse at 100% 18%,
-              rgba(6, 182, 212, 0.055),
-              transparent 28%
-            );
+            radial-gradient(ellipse at 10% 0%, rgba(37, 99, 235, 0.09), transparent 34%),
+            radial-gradient(ellipse at 100% 18%, rgba(6, 182, 212, 0.055), transparent 28%);
         }
 
         .kt-header {
@@ -564,11 +666,7 @@ export default function Home() {
           place-items: center;
           border: 1px solid rgba(96, 165, 250, 0.32);
           border-radius: 15px;
-          background: linear-gradient(
-            135deg,
-            rgba(37, 99, 235, 0.2),
-            rgba(6, 182, 212, 0.13)
-          );
+          background: linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(6, 182, 212, 0.13));
           color: #60a5fa;
           box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
         }
@@ -610,10 +708,7 @@ export default function Home() {
           color: var(--kt-text);
           font-size: 12px;
           font-weight: 650;
-          transition:
-            border-color 180ms ease,
-            background 180ms ease,
-            transform 180ms ease;
+          transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
         }
 
         .kt-theme-toggle:hover {
@@ -658,9 +753,7 @@ export default function Home() {
           height: 11px;
           border-radius: 50%;
           background: #64748b;
-          transition:
-            transform 180ms ease,
-            background 180ms ease;
+          transition: transform 180ms ease, background 180ms ease;
         }
 
         .kt-theme-thumb.is-light {
@@ -675,10 +768,7 @@ export default function Home() {
         }
 
         .kt-field {
-          transition:
-            border-color 180ms ease,
-            box-shadow 180ms ease,
-            background 180ms ease;
+          transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
         }
 
         .kt-field:focus {
@@ -696,7 +786,8 @@ export default function Home() {
         }
 
         .kt-toast {
-          animation: kt-toast-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+          animation: kt-toast-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+          will-change: transform, opacity;
         }
 
         .kt-toast-progress {
@@ -705,12 +796,7 @@ export default function Home() {
         }
 
         .kt-skeleton {
-          background: linear-gradient(
-            90deg,
-            rgba(148, 163, 184, 0.06),
-            rgba(148, 163, 184, 0.15),
-            rgba(148, 163, 184, 0.06)
-          );
+          background: linear-gradient(90deg, rgba(148, 163, 184, 0.06), rgba(148, 163, 184, 0.15), rgba(148, 163, 184, 0.06));
           background-size: 200% 100%;
           animation: kt-shimmer 1.5s infinite;
         }
@@ -718,11 +804,7 @@ export default function Home() {
         .kt-hero {
           border-color: var(--kt-border);
           background:
-            radial-gradient(
-              ellipse at 100% 0%,
-              rgba(37, 99, 235, 0.12),
-              transparent 45%
-            ),
+            radial-gradient(ellipse at 100% 0%, rgba(37, 99, 235, 0.12), transparent 45%),
             var(--kt-panel);
         }
 
@@ -731,33 +813,19 @@ export default function Home() {
           background: var(--kt-panel-secondary);
         }
 
-        .kt-info-row {
-          border-color: var(--kt-divider);
-        }
-
+        .kt-info-row,
         .kt-table-row {
           border-color: var(--kt-divider);
         }
 
         html[data-theme="light"] .kt-skeleton {
-          background: linear-gradient(
-            90deg,
-            rgba(100, 116, 139, 0.07),
-            rgba(100, 116, 139, 0.15),
-            rgba(100, 116, 139, 0.07)
-          );
+          background: linear-gradient(90deg, rgba(100, 116, 139, 0.07), rgba(100, 116, 139, 0.15), rgba(100, 116, 139, 0.07));
           background-size: 200% 100%;
         }
 
         @keyframes kt-fade-up {
-          from {
-            opacity: 0;
-            transform: translateY(12px) scale(0.99);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-          }
+          from { opacity: 0; transform: translateY(12px) scale(0.99); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
         }
 
         @keyframes kt-fade-in {
@@ -765,15 +833,10 @@ export default function Home() {
           to { opacity: 1; }
         }
 
+        /* Toast muncul dari atas tanpa transform horizontal. */
         @keyframes kt-toast-in {
-          from {
-            opacity: 0;
-            transform: translate(-50%, 18px) scale(0.98);
-          }
-          to {
-            opacity: 1;
-            transform: translate(-50%, 0) scale(1);
-          }
+          from { opacity: 0; transform: translateY(-14px) scale(0.98); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
         }
 
         @keyframes kt-progress {
@@ -789,6 +852,7 @@ export default function Home() {
           .kt-header {
             min-height: 68px;
             padding: 12px 16px;
+            gap: 8px;
           }
 
           .kt-brand {
@@ -834,44 +898,33 @@ export default function Home() {
       {/* Header */}
       <header className="kt-header">
         <div className="kt-brand">
-          <div className="kt-brand-icon">
-            <span>HSM</span>
-          </div>
-
+          <div className="kt-brand-icon"><span>HSM</span></div>
           <div className="kt-brand-copy">
             <h1>Kerupuk Tahu</h1>
             <p>Partner Management Dashboard</p>
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={toggleTheme}
-          disabled={!themeReady}
-          className="kt-theme-toggle"
-          aria-label={
-            theme === "dark"
-              ? "Aktifkan mode terang"
-              : "Aktifkan mode gelap"
-          }
-          aria-pressed={theme === "light"}
-          title={theme === "dark" ? "Mode terang" : "Mode gelap"}
-        >
-          <span className="kt-theme-icon" aria-hidden="true">
-            <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />
-          </span>
-          <span className="kt-theme-label">
-            {theme === "dark" ? "Light" : "Dark"}
-          </span>
-          <span className="kt-theme-track" aria-hidden="true">
-            <span
-              className={`kt-theme-thumb ${
-                theme === "light" ? "is-light" : ""
-              }`}
-            />
-          </span>
-        </button>
-            <InstallButton />
+        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            disabled={!themeReady}
+            className="kt-theme-toggle"
+            aria-label={theme === "dark" ? "Aktifkan mode terang" : "Aktifkan mode gelap"}
+            aria-pressed={theme === "light"}
+            title={theme === "dark" ? "Mode terang" : "Mode gelap"}
+          >
+            <span className="kt-theme-icon" aria-hidden="true">
+              <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />
+            </span>
+            <span className="kt-theme-label">{theme === "dark" ? "Light" : "Dark"}</span>
+            <span className="kt-theme-track" aria-hidden="true">
+              <span className={`kt-theme-thumb ${theme === "light" ? "is-light" : ""}`} />
+            </span>
+          </button>
+          <InstallButton />
+        </div>
       </header>
 
       <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
@@ -880,8 +933,7 @@ export default function Home() {
           <div
             className="pointer-events-none absolute inset-0 opacity-40"
             style={{
-              backgroundImage:
-                "linear-gradient(rgba(148,163,184,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.07) 1px, transparent 1px)",
+              backgroundImage: "linear-gradient(rgba(148,163,184,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.07) 1px, transparent 1px)",
               backgroundSize: "32px 32px",
               maskImage: "linear-gradient(to bottom right, black, transparent 80%)",
             }}
@@ -905,8 +957,7 @@ export default function Home() {
               </h2>
 
               <p className="mt-4 max-w-lg text-sm leading-7 text-[var(--kt-muted)] sm:text-base">
-                Satu ruang untuk mengelola toko, memantau persediaan, dan
-                menelusuri setiap transaksi.
+                Satu ruang untuk mengelola toko, memantau persediaan, dan menelusuri setiap transaksi.
               </p>
             </div>
 
@@ -914,48 +965,29 @@ export default function Home() {
               <div className="rounded-2xl border border-[var(--kt-border)] bg-[var(--kt-subtle)] p-4 transition duration-200 hover:border-blue-500/30 sm:p-5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-[var(--kt-muted)]">Total Toko</span>
-                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-blue-500/10 text-blue-500">
-                    <Icon name="store" size={17} />
-                  </span>
+                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-blue-500/10 text-blue-500"><Icon name="store" size={17} /></span>
                 </div>
-                <p className="mt-4 text-3xl font-bold tracking-tight text-[var(--kt-text)]">
-                  {fmt(partners.length)}
-                </p>
-                <p className="mt-1 text-[11px] text-[var(--kt-muted)]">
-                  Mitra terdaftar
-                </p>
+                <p className="mt-4 text-3xl font-bold tracking-tight text-[var(--kt-text)]">{fmt(partners.length)}</p>
+                <p className="mt-1 text-[11px] text-[var(--kt-muted)]">Mitra terdaftar</p>
               </div>
 
               <div className="rounded-2xl border border-[var(--kt-border)] bg-[var(--kt-subtle)] p-4 transition duration-200 hover:border-cyan-500/30 sm:p-5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-[var(--kt-muted)]">Total Stok</span>
-                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-cyan-500/10 text-cyan-500">
-                    <Icon name="package" size={17} />
-                  </span>
+                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-cyan-500/10 text-cyan-500"><Icon name="package" size={17} /></span>
                 </div>
-                <p className="mt-4 text-3xl font-bold tracking-tight text-[var(--kt-text)]">
-                  {fmt(totalStock)}
-                </p>
-                <p className="mt-1 text-[11px] text-[var(--kt-muted)]">
-                  Unit produk
-                </p>
+                <p className="mt-4 text-3xl font-bold tracking-tight text-[var(--kt-text)]">{fmt(totalStock)}</p>
+                <p className="mt-1 text-[11px] text-[var(--kt-muted)]">Unit produk</p>
               </div>
             </div>
           </div>
         </section>
 
-        {error && !showAdd && !selected && (
-          <div
-            role="alert"
-            className="flex items-start gap-3 rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-500"
-          >
+        {error && !showAdd && !showEdit && !selected && (
+          <div role="alert" className="flex items-start gap-3 rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-500">
             <Icon name="alert" className="mt-0.5 shrink-0" />
             <span className="flex-1">{error}</span>
-            <button
-              onClick={() => setError("")}
-              className="rounded-lg p-1 opacity-70 transition hover:bg-rose-500/10 hover:opacity-100"
-              aria-label="Tutup pesan"
-            >
+            <button type="button" onClick={() => setError("")} className="rounded-lg p-1 opacity-70 transition hover:bg-rose-500/10 hover:opacity-100" aria-label="Tutup pesan">
               <Icon name="x" size={16} />
             </button>
           </div>
@@ -967,13 +999,10 @@ export default function Home() {
             <div>
               <div className="flex items-center gap-3">
                 <span className="h-6 w-1 rounded-full bg-gradient-to-b from-blue-500 to-cyan-400" />
-                <h3 className="text-lg font-bold tracking-tight text-[var(--kt-text)]">
-                  Daftar Toko
-                </h3>
+                <h3 className="text-lg font-bold tracking-tight text-[var(--kt-text)]">Daftar Toko</h3>
               </div>
               <p className="mt-2 text-sm leading-6 text-[var(--kt-muted)]">
-                Pilih toko untuk melihat detail, mengelola stok, dan membuka
-                riwayat.
+                Pilih toko untuk melihat detail, mengelola stok, dan membuka riwayat.
               </p>
             </div>
 
@@ -993,19 +1022,11 @@ export default function Home() {
           {/* Pencarian dan sorting */}
           <div className="flex flex-col gap-4 border-b border-[var(--kt-divider)] p-5 sm:p-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="w-full lg:max-w-md">
-              <label
-                htmlFor="store-search"
-                className="mb-2 block text-[10px] font-bold uppercase tracking-[.15em] text-[var(--kt-muted)]"
-              >
+              <label htmlFor="store-search" className="mb-2 block text-[10px] font-bold uppercase tracking-[.15em] text-[var(--kt-muted)]">
                 Pencarian
               </label>
-
               <div className="relative">
-                <Icon
-                  name="search"
-                  size={18}
-                  className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--kt-muted)]"
-                />
+                <Icon name="search" size={18} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--kt-muted)]" />
                 <input
                   id="store-search"
                   type="search"
@@ -1018,15 +1039,7 @@ export default function Home() {
                   className={`${fieldClass} h-12 pl-11 pr-10`}
                 />
                 {search && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearch("");
-                      setPage(1);
-                    }}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--kt-muted)] transition hover:text-blue-500"
-                    aria-label="Hapus pencarian"
-                  >
+                  <button type="button" onClick={() => { setSearch(""); setPage(1); }} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--kt-muted)] transition hover:text-blue-500" aria-label="Hapus pencarian">
                     <Icon name="x" size={15} />
                   </button>
                 )}
@@ -1035,21 +1048,10 @@ export default function Home() {
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
               <div className="min-w-0 flex-1 sm:min-w-[190px]">
-                <label
-                  htmlFor="sort-by"
-                  className="mb-2 block text-[10px] font-bold uppercase tracking-[.15em] text-[var(--kt-muted)]"
-                >
+                <label htmlFor="sort-by" className="mb-2 block text-[10px] font-bold uppercase tracking-[.15em] text-[var(--kt-muted)]">
                   Urutkan berdasarkan
                 </label>
-                <select
-                  id="sort-by"
-                  value={sortBy}
-                  onChange={(e) => {
-                    setSortBy(e.target.value as SortBy);
-                    setPage(1);
-                  }}
-                  className={`${fieldClass} h-12 cursor-pointer`}
-                >
+                <select id="sort-by" value={sortBy} onChange={(e) => { setSortBy(e.target.value as SortBy); setPage(1); }} className={`${fieldClass} h-12 cursor-pointer`}>
                   <option value="name">Nama toko</option>
                   <option value="stock">Jumlah stok</option>
                 </select>
@@ -1057,15 +1059,8 @@ export default function Home() {
 
               <button
                 type="button"
-                onClick={() => {
-                  setSortAsc((value) => !value);
-                  setPage(1);
-                }}
-                aria-label={
-                  sortAsc
-                    ? "Urutan naik, klik untuk urutan turun"
-                    : "Urutan turun, klik untuk urutan naik"
-                }
+                onClick={() => { setSortAsc((value) => !value); setPage(1); }}
+                aria-label={sortAsc ? "Urutan naik, klik untuk urutan turun" : "Urutan turun, klik untuk urutan naik"}
                 title={sortAsc ? "Urutan naik" : "Urutan turun"}
                 className={`${secondaryButton} h-12 shrink-0`}
               >
@@ -1078,165 +1073,85 @@ export default function Home() {
           {/* Tabel */}
           <div className="p-4 sm:p-6">
             <div className="overflow-hidden rounded-2xl border border-[var(--kt-border)]">
-              <div className="w-full min-w-0">
-                <table className="w-full table-fixed text-left">
-                  <thead>
-                    <tr className="border-b border-[var(--kt-divider)] bg-[var(--kt-subtle)] text-[10px] uppercase tracking-wider text-[var(--kt-muted)] sm:text-xs">
-                      <th className="w-10 px-2 py-3 font-bold sm:w-16 sm:px-5 sm:py-4">
-                        No.
-                      </th>
-                      <th className="px-2 py-3 font-bold sm:px-5 sm:py-4">
-                        Informasi Toko
-                      </th>
-                      <th className="w-[108px] px-2 py-3 text-right font-bold sm:w-36 sm:px-5 sm:py-4">
-                        Total Stok
-                      </th>
+              <table className="w-full table-fixed text-left">
+                <thead>
+                  <tr className="border-b border-[var(--kt-divider)] bg-[var(--kt-subtle)] text-[10px] uppercase tracking-wider text-[var(--kt-muted)] sm:text-xs">
+                    <th className="w-10 px-2 py-3 font-bold sm:w-16 sm:px-5 sm:py-4">No.</th>
+                    <th className="px-2 py-3 font-bold sm:px-5 sm:py-4">Informasi Toko</th>
+                    <th className="w-[108px] px-2 py-3 text-right font-bold sm:w-36 sm:px-5 sm:py-4">Total Stok</th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-[var(--kt-divider)]">
+                  {loading && Array.from({ length: 4 }).map((_, i) => (
+                    <tr key={i}>
+                      <td className="px-2 py-5 sm:px-5"><div className="kt-skeleton h-4 w-5 rounded" /></td>
+                      <td className="px-2 py-5 sm:px-5">
+                        <div className="space-y-2">
+                          <div className="kt-skeleton h-3.5 w-24 max-w-full rounded sm:w-36" />
+                          <div className="kt-skeleton h-3 w-20 max-w-full rounded sm:w-24" />
+                        </div>
+                      </td>
+                      <td className="px-2 py-5 sm:px-5"><div className="kt-skeleton ml-auto h-6 w-14 rounded-lg sm:w-20" /></td>
                     </tr>
-                  </thead>
+                  ))}
 
-                  <tbody className="divide-y divide-[var(--kt-divider)]">
-                    {loading &&
-                      Array.from({ length: 4 }).map((_, i) => (
-                        <tr key={i}>
-                          <td className="px-2 py-5 sm:px-5">
-                            <div className="kt-skeleton h-4 w-5 rounded" />
-                          </td>
-                          <td className="px-2 py-5 sm:px-5">
-                            <div className="space-y-2">
-                              <div className="kt-skeleton h-3.5 w-24 max-w-full rounded sm:w-36" />
-                              <div className="kt-skeleton h-3 w-20 max-w-full rounded sm:w-24" />
-                            </div>
-                          </td>
-                          <td className="px-2 py-5 sm:px-5">
-                            <div className="kt-skeleton ml-auto h-6 w-14 rounded-lg sm:w-20" />
-                          </td>
-                        </tr>
-                      ))}
+                  {!loading && visible.map((partner, index) => (
+                    <tr key={partner.id} className="group cursor-pointer transition-colors duration-200 hover:bg-blue-500/[.045]" onClick={() => openPartner(partner.id)}>
+                      <td className="px-2 py-4 text-[10px] tabular-nums text-[var(--kt-muted)] sm:px-5 sm:py-5 sm:text-xs">
+                        {String((currentPage - 1) * PAGE_SIZE + index + 1).padStart(2, "0")}
+                      </td>
+                      <td className="min-w-0 px-2 py-4 sm:px-5 sm:py-5">
+                        <button type="button" onClick={(e) => { e.stopPropagation(); openPartner(partner.id); }} className="block w-full min-w-0 text-left">
+                          <span className="block truncate text-xs font-bold text-[var(--kt-text)] transition group-hover:text-blue-500 sm:text-sm">{partner.storeName}</span>
+                          <span className="mt-1 block text-[10px] text-[var(--kt-muted)] sm:text-xs">Klik untuk detail</span>
+                        </button>
+                      </td>
+                      <td className="px-2 py-4 text-right sm:px-5 sm:py-5">
+                        <span className={`inline-flex max-w-full items-center justify-center gap-1 rounded-lg border px-1.5 py-1.5 text-[10px] font-bold tabular-nums sm:gap-1.5 sm:px-2.5 sm:text-xs ${partner.totalStock > 0 ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-500" : "border-[var(--kt-border)] bg-[var(--kt-subtle)] text-[var(--kt-muted)]"}`}>
+                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${partner.totalStock > 0 ? "bg-emerald-500" : "bg-slate-400"}`} />
+                          <span className="whitespace-nowrap">{fmt(partner.totalStock)} unit</span>
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
 
-                    {!loading &&
-                      visible.map((partner, index) => (
-                        <tr
-                          key={partner.id}
-                          className="group cursor-pointer transition-colors duration-200 hover:bg-blue-500/[.045]"
-                          onClick={() => openPartner(partner.id)}
-                        >
-                          <td className="px-2 py-4 text-[10px] tabular-nums text-[var(--kt-muted)] sm:px-5 sm:py-5 sm:text-xs">
-                            {String(
-                              (currentPage - 1) * PAGE_SIZE + index + 1
-                            ).padStart(2, "0")}
-                          </td>
-
-                          <td className="min-w-0 px-2 py-4 sm:px-5 sm:py-5">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openPartner(partner.id);
-                              }}
-                              className="block w-full min-w-0 text-left"
-                            >
-                              <span className="block truncate text-xs font-bold text-[var(--kt-text)] transition group-hover:text-blue-500 sm:text-sm">
-                                {partner.storeName}
-                              </span>
-                              <span className="mt-1 block text-[10px] text-[var(--kt-muted)] sm:text-xs">
-                                Klik untuk detail
-                              </span>
-                            </button>
-                          </td>
-
-                          <td className="px-2 py-4 text-right sm:px-5 sm:py-5">
-                            <span
-                              className={`inline-flex max-w-full items-center justify-center gap-1 rounded-lg border px-1.5 py-1.5 text-[10px] font-bold tabular-nums sm:gap-1.5 sm:px-2.5 sm:text-xs ${
-                                partner.totalStock > 0
-                                  ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-500"
-                                  : "border-[var(--kt-border)] bg-[var(--kt-subtle)] text-[var(--kt-muted)]"
-                              }`}
-                            >
-                              <span
-                                className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                                  partner.totalStock > 0
-                                    ? "bg-emerald-500"
-                                    : "bg-slate-400"
-                                }`}
-                              />
-                              <span className="whitespace-nowrap">
-                                {fmt(partner.totalStock)} unit
-                              </span>
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-
-                    {!loading && visible.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan={3}
-                          className="px-3 py-14 text-center sm:px-5 sm:py-16"
-                        >
-                          <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-[var(--kt-border)] bg-[var(--kt-subtle)] text-[var(--kt-muted)]">
-                            <Icon name="search" size={23} />
-                          </span>
-                          <p className="mt-4 text-sm font-bold text-[var(--kt-text)]">
-                            {search ? "Toko tidak ditemukan" : "Belum ada toko"}
-                          </p>
-                          <p className="mx-auto mt-1 max-w-xs text-xs leading-5 text-[var(--kt-muted)]">
-                            {search
-                              ? "Coba kata kunci lain."
-                              : "Tambahkan toko pertama untuk mulai mengelola stok."}
-                          </p>
-                          {!search && (
-                            <button
-                              type="button"
-                              onClick={() => setShowAdd(true)}
-                              className="mt-4 inline-flex items-center gap-2 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs font-bold text-blue-500 transition hover:bg-blue-500/15"
-                            >
-                              <Icon name="plus" size={15} />
-                              Tambah toko
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                  {!loading && visible.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="px-3 py-14 text-center sm:px-5 sm:py-16">
+                        <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-[var(--kt-border)] bg-[var(--kt-subtle)] text-[var(--kt-muted)]">
+                          <Icon name="search" size={23} />
+                        </span>
+                        <p className="mt-4 text-sm font-bold text-[var(--kt-text)]">{search ? "Toko tidak ditemukan" : "Belum ada toko"}</p>
+                        <p className="mx-auto mt-1 max-w-xs text-xs leading-5 text-[var(--kt-muted)]">
+                          {search ? "Coba kata kunci lain." : "Tambahkan toko pertama untuk mulai mengelola stok."}
+                        </p>
+                        {!search && (
+                          <button type="button" onClick={() => { setError(""); setShowAdd(true); }} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs font-bold text-blue-500 transition hover:bg-blue-500/15">
+                            <Icon name="plus" size={15} />
+                            Tambah toko
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
 
             <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-xs text-[var(--kt-muted)]">
-                {filtered.length
-                  ? (currentPage - 1) * PAGE_SIZE + 1
-                  : 0}
-                –{Math.min(currentPage * PAGE_SIZE, filtered.length)} dari{" "}
-                {filtered.length} toko
+                {filtered.length ? (currentPage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} dari {filtered.length} toko
               </span>
 
               <div className="flex items-center justify-between gap-2 sm:justify-end">
-                <button
-                  type="button"
-                  disabled={currentPage === 1}
-                  onClick={() => setPage((value) => Math.max(1, value - 1))}
-                  className="grid h-10 w-10 place-items-center rounded-xl border border-[var(--kt-border)] bg-[var(--kt-subtle)] text-[var(--kt-text)] transition hover:bg-[var(--kt-hover)] disabled:cursor-not-allowed disabled:opacity-30"
-                  aria-label="Halaman sebelumnya"
-                >
+                <button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="grid h-10 w-10 place-items-center rounded-xl border border-[var(--kt-border)] bg-[var(--kt-subtle)] text-[var(--kt-text)] transition hover:bg-[var(--kt-hover)] disabled:cursor-not-allowed disabled:opacity-30" aria-label="Halaman sebelumnya">
                   <Icon name="chevron-left" size={17} />
                 </button>
-
                 <span className="min-w-[100px] text-center text-xs tabular-nums text-[var(--kt-muted)]">
-                  Halaman{" "}
-                  <strong className="text-[var(--kt-text)]">
-                    {currentPage}
-                  </strong>{" "}
-                  / {pages}
+                  Halaman <strong className="text-[var(--kt-text)]">{currentPage}</strong> / {pages}
                 </span>
-
-                <button
-                  type="button"
-                  disabled={currentPage === pages}
-                  onClick={() => setPage((value) => Math.min(pages, value + 1))}
-                  className="grid h-10 w-10 place-items-center rounded-xl border border-[var(--kt-border)] bg-[var(--kt-subtle)] text-[var(--kt-text)] transition hover:bg-[var(--kt-hover)] disabled:cursor-not-allowed disabled:opacity-30"
-                  aria-label="Halaman berikutnya"
-                >
+                <button type="button" disabled={currentPage === pages} onClick={() => setPage((value) => Math.min(pages, value + 1))} className="grid h-10 w-10 place-items-center rounded-xl border border-[var(--kt-border)] bg-[var(--kt-subtle)] text-[var(--kt-text)] transition hover:bg-[var(--kt-hover)] disabled:cursor-not-allowed disabled:opacity-30" aria-label="Halaman berikutnya">
                   <Icon name="chevron-right" size={17} />
                 </button>
               </div>
@@ -1244,7 +1159,7 @@ export default function Home() {
           </div>
         </section>
 
-        <footer className="flex flex-col gap-2 border-t text-center border-[var(--kt-divider)] py-5 text-[11px] text-[var(--kt-muted)] sm:flex-row sm:items-center sm:justify-between">
+        <footer className="flex flex-col gap-2 border-t border-[var(--kt-divider)] py-5 text-center text-[11px] text-[var(--kt-muted)] sm:flex-row sm:items-center sm:justify-between">
           <span>© 2026 Kerupuk Tahu · Partner Workspace</span>
         </footer>
       </div>
@@ -1254,118 +1169,89 @@ export default function Home() {
         <div
           className="kt-modal-backdrop fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/65 p-3 backdrop-blur-md sm:p-5"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget && !saving) setShowAdd(false);
+            if (e.target === e.currentTarget && !saving) {
+              setShowAdd(false);
+              setError("");
+            }
           }}
         >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="add-title"
-            className="kt-modal-content kt-panel my-auto w-full max-w-lg overflow-hidden rounded-3xl"
-          >
+          <section role="dialog" aria-modal="true" aria-labelledby="add-title" className="kt-modal-content kt-panel my-auto w-full max-w-lg overflow-hidden rounded-3xl">
             <div className="relative overflow-hidden border-b border-[var(--kt-divider)] px-5 py-5 sm:px-7 sm:py-6">
               <div className="pointer-events-none absolute -right-10 -top-16 h-40 w-40 rounded-full bg-blue-500/15 blur-3xl" />
               <div className="relative flex items-start justify-between gap-4">
                 <div className="flex items-start gap-3 sm:gap-4">
-                  <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-blue-500/20 bg-blue-500/10 text-blue-500">
-                    <Icon name="store" size={22} />
-                  </div>
+                  <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-blue-500/20 bg-blue-500/10 text-blue-500"><Icon name="store" size={22} /></div>
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[.2em] text-blue-500">
-                      Partner setup
-                    </p>
-                    <h2
-                      id="add-title"
-                      className="mt-1 text-xl font-bold text-[var(--kt-text)]"
-                    >
-                      Tambah Toko
-                    </h2>
-                    <p className="mt-1 text-sm text-[var(--kt-muted)]">
-                      Masukkan informasi toko baru.
-                    </p>
+                    <p className="text-[10px] font-bold uppercase tracking-[.2em] text-blue-500">Partner setup</p>
+                    <h2 id="add-title" className="mt-1 text-xl font-bold text-[var(--kt-text)]">Tambah Toko</h2>
+                    <p className="mt-1 text-sm text-[var(--kt-muted)]">Isi nama toko sekarang. Informasi lainnya bisa ditambahkan nanti.</p>
                   </div>
                 </div>
-
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => setShowAdd(false)}
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--kt-border)] text-[var(--kt-muted)] transition hover:bg-[var(--kt-hover)] hover:text-[var(--kt-text)] disabled:opacity-40"
-                  aria-label="Tutup modal"
-                >
+                <button type="button" disabled={saving} onClick={() => { setShowAdd(false); setError(""); }} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--kt-border)] text-[var(--kt-muted)] transition hover:bg-[var(--kt-hover)] hover:text-[var(--kt-text)] disabled:opacity-40" aria-label="Tutup modal">
                   <Icon name="x" />
                 </button>
               </div>
             </div>
 
             <form onSubmit={addPartner} className="space-y-4 p-5 sm:p-7">
-              {inputFields.map(([name, label, maxLength]) => (
-                <label
-                  key={name}
-                  className="block text-xs font-bold text-[var(--kt-text)]"
-                >
-                  {label}
-                  {name === "address" ? (
-                    <textarea
-                      name={name}
-                      required
-                      maxLength={maxLength}
-                      rows={3}
-                      placeholder="Masukkan alamat lengkap"
-                      className={`${fieldClass} resize-y p-3 font-normal`}
-                    />
-                  ) : (
-                    <input
-                      name={name}
-                      required
-                      maxLength={maxLength}
-                      type={name === "phone" ? "tel" : "text"}
-                      placeholder={
-                        name === "storeName"
-                          ? "Contoh: Toko Berkah"
-                          : name === "owner"
-                            ? "Nama pemilik toko"
-                            : "08xxxxxxxxxx"
-                      }
-                      className={`${fieldClass} h-12 font-normal`}
-                    />
-                  )}
-                </label>
-              ))}
+              {inputFields.map(([name, label, maxLength]) => {
+                const required = name === "storeName";
+
+                return (
+                  <label key={name} className="block text-xs font-bold text-[var(--kt-text)]">
+                    <span className="flex flex-wrap items-center gap-2">
+                      {label}
+                      {required ? (
+                        <span className="text-rose-500">*</span>
+                      ) : (
+                        <span className="font-normal text-[var(--kt-muted)]">(Opsional)</span>
+                      )}
+                    </span>
+
+                    {name === "address" ? (
+                      <textarea
+                        name={name}
+                        required={required}
+                        maxLength={maxLength}
+                        rows={3}
+                        placeholder="Alamat bisa diisi nanti"
+                        className={`${fieldClass} resize-y p-3 font-normal`}
+                      />
+                    ) : (
+                      <input
+                        name={name}
+                        required={required}
+                        maxLength={maxLength}
+                        type={name === "phone" ? "tel" : "text"}
+                        placeholder={
+                          name === "storeName"
+                            ? "Contoh: Toko Berkah"
+                            : name === "owner"
+                              ? "Nama pemilik toko (opsional)"
+                              : "Nomor telepon (opsional)"
+                        }
+                        className={`${fieldClass} h-12 font-normal`}
+                      />
+                    )}
+                  </label>
+                );
+              })}
 
               {error && (
-                <p
-                  role="alert"
-                  className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-500"
-                >
-                  {error}
-                </p>
+                <p role="alert" className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-500">{error}</p>
               )}
 
+              <p className="text-xs leading-5 text-[var(--kt-muted)]">
+                Kolom bertanda * wajib diisi. Data lainnya bisa diedit kapan saja melalui detail toko.
+              </p>
+
               <div className="flex flex-col-reverse gap-3 border-t border-[var(--kt-divider)] pt-5 sm:flex-row">
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => setShowAdd(false)}
-                  className={`${secondaryButton} flex-1`}
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className={`${buttonBase} flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-500 hover:to-indigo-500`}
-                >
+                <button type="button" disabled={saving} onClick={() => { setShowAdd(false); setError(""); }} className={`${secondaryButton} flex-1`}>Batal</button>
+                <button type="submit" disabled={saving} className={`${buttonBase} flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-500 hover:to-indigo-500`}>
                   {saving ? (
-                    <>
-                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                      Menyimpan...
-                    </>
+                    <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />Menyimpan...</>
                   ) : (
-                    <>
-                      <Icon name="check" size={16} />
-                      Simpan Toko
-                    </>
+                    <><Icon name="check" size={16} />Simpan Toko</>
                   )}
                 </button>
               </div>
@@ -1382,37 +1268,16 @@ export default function Home() {
             if (e.target === e.currentTarget) closeDetail();
           }}
         >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="detail-title"
-            className="kt-modal-content kt-panel my-auto flex max-h-[94dvh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl sm:max-h-[90dvh]"
-          >
+          <section role="dialog" aria-modal="true" aria-labelledby="detail-title" className="kt-modal-content kt-panel my-auto flex max-h-[94dvh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl sm:max-h-[90dvh]">
             <header className="flex items-center justify-between gap-4 border-b border-[var(--kt-divider)] px-4 py-4 sm:px-7 sm:py-5">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-blue-500/20 bg-blue-500/10 text-blue-500">
-                  <Icon name="store" size={20} />
-                </div>
+                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-blue-500/20 bg-blue-500/10 text-blue-500"><Icon name="store" size={20} /></div>
                 <div className="min-w-0">
-                  <p className="text-[10px] font-bold uppercase tracking-[.18em] text-blue-500">
-                    Detail mitra
-                  </p>
-                  <h2
-                    id="detail-title"
-                    className="mt-1 truncate text-lg font-bold text-[var(--kt-text)] sm:text-xl"
-                  >
-                    {selected.storeName}
-                  </h2>
+                  <p className="text-[10px] font-bold uppercase tracking-[.18em] text-blue-500">Detail mitra</p>
+                  <h2 id="detail-title" className="mt-1 truncate text-lg font-bold text-[var(--kt-text)] sm:text-xl">{selected.storeName}</h2>
                 </div>
               </div>
-
-              <button
-                type="button"
-                disabled={saving}
-                onClick={closeDetail}
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[var(--kt-border)] text-[var(--kt-muted)] transition hover:bg-[var(--kt-hover)] hover:text-[var(--kt-text)] disabled:opacity-40"
-                aria-label="Tutup detail"
-              >
+              <button type="button" disabled={saving} onClick={closeDetail} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[var(--kt-border)] text-[var(--kt-muted)] transition hover:bg-[var(--kt-hover)] hover:text-[var(--kt-text)] disabled:opacity-40" aria-label="Tutup detail">
                 <Icon name="x" />
               </button>
             </header>
@@ -1425,235 +1290,113 @@ export default function Home() {
                     <div className="pointer-events-none absolute -right-10 -top-16 h-44 w-44 rounded-full bg-blue-500/10 blur-3xl" />
                     <div className="relative">
                       <div className="flex items-center justify-between gap-3">
-                        <p className="text-xs font-medium text-[var(--kt-muted)]">
-                          Stok tersedia
-                        </p>
-                        <span className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-500">
-                          Live balance
-                        </span>
+                        <p className="text-xs font-medium text-[var(--kt-muted)]">Stok tersedia</p>
+                        <span className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-500">Live balance</span>
                       </div>
-                      <p className="mt-4 break-words text-4xl font-bold tracking-tight text-[var(--kt-text)] sm:text-6xl">
-                        {fmt(selected.totalStock)}
-                      </p>
-                      <p className="mt-1 text-sm text-[var(--kt-muted)]">
-                        unit produk
-                      </p>
+                      <p className="mt-4 break-words text-4xl font-bold tracking-tight text-[var(--kt-text)] sm:text-6xl">{fmt(selected.totalStock)}</p>
+                      <p className="mt-1 text-sm text-[var(--kt-muted)]">unit produk</p>
                       <div className="mt-6 border-t border-[var(--kt-divider)] pt-4">
-                        <p className="text-sm font-semibold leading-6 text-[var(--kt-text)]">
-                          {selected.lastMovement}
-                        </p>
-                        <p className="mt-1.5 flex items-center gap-1.5 text-xs text-[var(--kt-muted)]">
-                          <Icon name="clock" size={13} />
-                          {dateLabel(selected.lastMovementAt)}
-                        </p>
+                        <p className="text-sm font-semibold leading-6 text-[var(--kt-text)]">{selected.lastMovement}</p>
+                        <p className="mt-1.5 flex items-center gap-1.5 text-xs text-[var(--kt-muted)]"><Icon name="clock" size={13} />{dateLabel(selected.lastMovementAt)}</p>
                       </div>
                     </div>
                   </div>
 
                   <div className="overflow-hidden rounded-2xl border border-[var(--kt-border)]">
-                    <div className="border-b border-[var(--kt-divider)] bg-[var(--kt-subtle)] px-4 py-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[.15em] text-[var(--kt-muted)]">
-                        Informasi toko
-                      </p>
+                    <div className="flex items-center justify-between gap-3 border-b border-[var(--kt-divider)] bg-[var(--kt-subtle)] px-4 py-3">
+                      <p className="text-[10px] font-bold uppercase tracking-[.15em] text-[var(--kt-muted)]">Informasi toko</p>
+                      <button
+                        type="button"
+                        onClick={openEditPartner}
+                        disabled={saving}
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-blue-500/20 bg-blue-500/10 px-2.5 py-2 text-xs font-bold text-blue-500 transition hover:bg-blue-500/15 disabled:opacity-50"
+                      >
+                        <Icon name="refresh" size={14} />
+                        Edit Informasi
+                      </button>
                     </div>
 
-                    {(
-                      [
-                        ["Nama toko", selected.storeName, "store"],
-                        ["Nama pemilik", selected.owner, "store"],
-                        ["Nomor telepon", selected.phone, "phone"],
-                        ["Alamat", selected.address, "map"],
-                      ] as const
-                    ).map(([label, value, icon]) => (
-                      <div
-                        key={label}
-                        className="kt-info-row flex items-start gap-3 border-b p-4 last:border-0"
-                      >
-                        <span className="mt-0.5 text-[var(--kt-muted)]">
-                          <Icon name={icon} size={16} />
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[11px] text-[var(--kt-muted)]">
-                            {label}
-                          </p>
-                          {label === "Nomor telepon" ? (
-                            <a
-                              href={`tel:${value}`}
-                              className="mt-1 block break-words text-sm font-semibold text-blue-500 transition hover:text-blue-600"
-                            >
-                              {value}
-                            </a>
-                          ) : (
-                            <p className="mt-1 break-words text-sm font-medium leading-6 text-[var(--kt-text)]">
-                              {value}
-                            </p>
-                          )}
+                    {([
+                      ["Nama toko", selected.storeName, "store"],
+                      ["Nama pemilik", selected.owner, "store"],
+                      ["Nomor telepon", selected.phone, "phone"],
+                      ["Alamat", selected.address, "map"],
+                    ] as const).map(([label, value, icon]) => {
+                      const displayValue = value?.trim() || "Belum diisi";
+
+                      return (
+                        <div key={label} className="kt-info-row flex items-start gap-3 border-b p-4 last:border-0">
+                          <span className="mt-0.5 text-[var(--kt-muted)]"><Icon name={icon} size={16} /></span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[11px] text-[var(--kt-muted)]">{label}</p>
+                            {label === "Nomor telepon" && value?.trim() ? (
+                              <a href={`tel:${value}`} className="mt-1 block break-words text-sm font-semibold text-blue-500 transition hover:text-blue-600">{displayValue}</a>
+                            ) : (
+                              <p className={`mt-1 break-words text-sm font-medium leading-6 ${value?.trim() ? "text-[var(--kt-text)]" : "text-[var(--kt-muted)] italic"}`}>{displayValue}</p>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
                 {/* Kelola stok dan riwayat */}
                 <div className="space-y-5">
                   <div>
-                    <h3 className="text-base font-bold text-[var(--kt-text)]">
-                      Kelola Stok
-                    </h3>
-                    <p className="mt-1 text-sm leading-6 text-[var(--kt-muted)]">
-                      Catat penambahan stok atau jumlah produk yang terjual.
-                    </p>
+                    <h3 className="text-base font-bold text-[var(--kt-text)]">Kelola Stok</h3>
+                    <p className="mt-1 text-sm leading-6 text-[var(--kt-muted)]">Catat penambahan stok atau jumlah produk yang terjual.</p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 rounded-2xl border border-[var(--kt-border)] bg-[var(--kt-subtle)] p-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAction("add");
-                        setAmount("");
-                        setError("");
-                      }}
-                      className={`flex items-center justify-center gap-2 rounded-xl px-2 py-3 text-xs font-bold transition sm:text-sm ${
-                        action === "add"
-                          ? "border border-emerald-500/20 bg-emerald-500/10 text-emerald-500 shadow-sm"
-                          : "text-[var(--kt-muted)] hover:bg-[var(--kt-hover)] hover:text-[var(--kt-text)]"
-                      }`}
-                    >
-                      <Icon name="plus" size={16} />
-                      Tambah Stok
+                    <button type="button" onClick={() => { setAction("add"); setAmount(""); setError(""); }} className={`flex items-center justify-center gap-2 rounded-xl px-2 py-3 text-xs font-bold transition sm:text-sm ${action === "add" ? "border border-emerald-500/20 bg-emerald-500/10 text-emerald-500 shadow-sm" : "text-[var(--kt-muted)] hover:bg-[var(--kt-hover)] hover:text-[var(--kt-text)]"}`}>
+                      <Icon name="plus" size={16} />Tambah Stok
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAction("sold");
-                        setAmount("");
-                        setError("");
-                      }}
-                      className={`flex items-center justify-center gap-2 rounded-xl px-2 py-3 text-xs font-bold transition sm:text-sm ${
-                        action === "sold"
-                          ? "border border-rose-500/20 bg-rose-500/10 text-rose-500 shadow-sm"
-                          : "text-[var(--kt-muted)] hover:bg-[var(--kt-hover)] hover:text-[var(--kt-text)]"
-                      }`}
-                    >
-                      <Icon name="arrow-down" size={16} />
-                      Stok Terjual
+                    <button type="button" onClick={() => { setAction("sold"); setAmount(""); setError(""); }} className={`flex items-center justify-center gap-2 rounded-xl px-2 py-3 text-xs font-bold transition sm:text-sm ${action === "sold" ? "border border-rose-500/20 bg-rose-500/10 text-rose-500 shadow-sm" : "text-[var(--kt-muted)] hover:bg-[var(--kt-hover)] hover:text-[var(--kt-text)]"}`}>
+                      <Icon name="arrow-down" size={16} />Stok Terjual
                     </button>
                   </div>
 
                   <form onSubmit={saveStock} className="space-y-4">
-                    <div
-                      className={`rounded-2xl border p-4 transition-colors sm:p-5 ${
-                        action === "add"
-                          ? "border-emerald-500/20 bg-emerald-500/[.035]"
-                          : "border-rose-500/20 bg-rose-500/[.035]"
-                      }`}
-                    >
+                    <div className={`rounded-2xl border p-4 transition-colors sm:p-5 ${action === "add" ? "border-emerald-500/20 bg-emerald-500/[.035]" : "border-rose-500/20 bg-rose-500/[.035]"}`}>
                       <label className="block text-xs font-bold text-[var(--kt-text)]">
                         Jumlah unit
-                        <input
-                          type="number"
-                          min="1"
-                          step="1"
-                          required
-                          value={amount}
-                          onChange={(e) => setAmount(e.target.value)}
-                          placeholder="Masukkan jumlah"
-                          className={`${fieldClass} h-12 text-base font-semibold placeholder:text-sm placeholder:font-normal`}
-                        />
+                        <input type="number" min="1" step="1" required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Masukkan jumlah" className={`${fieldClass} h-12 text-base font-semibold placeholder:text-sm placeholder:font-normal`} />
                       </label>
-
                       <label className="mt-4 block text-xs font-bold text-[var(--kt-text)]">
-                        Catatan{" "}
-                        <span className="font-normal text-[var(--kt-muted)]">
-                          (opsional)
-                        </span>
-                        <textarea
-                          rows={2}
-                          maxLength={500}
-                          value={note}
-                          onChange={(e) => setNote(e.target.value)}
-                          className={`${fieldClass} resize-y p-3 font-normal`}
-                          placeholder="Contoh: pengiriman hari ini"
-                        />
+                        Catatan <span className="font-normal text-[var(--kt-muted)]">(opsional)</span>
+                        <textarea rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} className={`${fieldClass} resize-y p-3 font-normal`} placeholder="Contoh: pengiriman hari ini" />
                       </label>
                     </div>
 
                     <div className="rounded-xl border border-[var(--kt-border)] bg-[var(--kt-subtle)] p-4">
                       <div className="flex items-center justify-between gap-3 text-sm">
-                        <span className="text-[var(--kt-muted)]">
-                          Stok saat ini
-                        </span>
-                        <strong className="tabular-nums text-[var(--kt-text)]">
-                          {fmt(selected.totalStock)} unit
-                        </strong>
+                        <span className="text-[var(--kt-muted)]">Stok saat ini</span>
+                        <strong className="tabular-nums text-[var(--kt-text)]">{fmt(selected.totalStock)} unit</strong>
                       </div>
-
                       <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--kt-divider)] pt-3 text-sm">
-                        <span className="text-[var(--kt-muted)]">
-                          Perkiraan setelah input
-                        </span>
-                        <strong
-                          className={`text-right tabular-nums ${
-                            action === "sold" &&
-                            Number(amount) > selected.totalStock
-                              ? "text-rose-500"
-                              : action === "add"
-                                ? "text-emerald-500"
-                                : "text-blue-500"
-                          }`}
-                        >
-                          {amount &&
-                          Number.isSafeInteger(Number(amount)) &&
-                          Number(amount) > 0
-                            ? fmt(
-                                action === "add"
-                                  ? selected.totalStock + Number(amount)
-                                  : selected.totalStock - Number(amount)
-                              )
+                        <span className="text-[var(--kt-muted)]">Perkiraan setelah input</span>
+                        <strong className={`text-right tabular-nums ${action === "sold" && Number(amount) > selected.totalStock ? "text-rose-500" : action === "add" ? "text-emerald-500" : "text-blue-500"}`}>
+                          {amount && Number.isSafeInteger(Number(amount)) && Number(amount) > 0
+                            ? fmt(action === "add" ? selected.totalStock + Number(amount) : selected.totalStock - Number(amount))
                             : fmt(selected.totalStock)}{" "}
                           unit
                         </strong>
                       </div>
-
-                      {action === "sold" &&
-                        Number(amount) > selected.totalStock &&
-                        Number(amount) > 0 && (
-                          <p className="mt-3 text-xs text-rose-500">
-                            Jumlah melebihi stok yang tersedia.
-                          </p>
-                        )}
+                      {action === "sold" && Number(amount) > selected.totalStock && Number(amount) > 0 && (
+                        <p className="mt-3 text-xs text-rose-500">Jumlah melebihi stok yang tersedia.</p>
+                      )}
                     </div>
 
-                    {error && (
-                      <p
-                        role="alert"
-                        className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-500"
-                      >
-                        {error}
-                      </p>
+                    {error && !showEdit && !showAdd && (
+                      <p role="alert" className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-500">{error}</p>
                     )}
 
-                    <button
-                      type="submit"
-                      disabled={saving}
-                      className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3.5 text-sm font-bold text-white shadow-lg transition duration-200 hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-50 ${
-                        action === "add"
-                          ? "bg-gradient-to-r from-emerald-600 to-teal-600 shadow-emerald-900/10 hover:from-emerald-500 hover:to-teal-500"
-                          : "bg-gradient-to-r from-rose-600 to-pink-600 shadow-rose-900/10 hover:from-rose-500 hover:to-pink-500"
-                      }`}
-                    >
+                    <button type="submit" disabled={saving} className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3.5 text-sm font-bold text-white shadow-lg transition duration-200 hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-50 ${action === "add" ? "bg-gradient-to-r from-emerald-600 to-teal-600 shadow-emerald-900/10 hover:from-emerald-500 hover:to-teal-500" : "bg-gradient-to-r from-rose-600 to-pink-600 shadow-rose-900/10 hover:from-rose-500 hover:to-pink-500"}`}>
                       {saving ? (
-                        <>
-                          <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                          Menyimpan transaksi...
-                        </>
+                        <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />Menyimpan transaksi...</>
                       ) : (
-                        <>
-                          <Icon name="check" size={17} />
-                          {action === "add"
-                            ? "Simpan Penambahan Stok"
-                            : "Simpan Penjualan"}
-                        </>
+                        <><Icon name="check" size={17} />{action === "add" ? "Simpan Penambahan Stok" : "Simpan Penjualan"}</>
                       )}
                     </button>
                   </form>
@@ -1662,166 +1405,74 @@ export default function Home() {
                   <div className="border-t border-[var(--kt-divider)] pt-5">
                     <div className="mb-4 flex items-center justify-between gap-3">
                       <div>
-                        <h3 className="text-sm font-bold text-[var(--kt-text)]">
-                          Riwayat Stok
-                        </h3>
-                        <p className="mt-1 text-xs text-[var(--kt-muted)]">
-                          Catatan aktivitas toko ini.
-                        </p>
+                        <h3 className="text-sm font-bold text-[var(--kt-text)]">Riwayat Stok</h3>
+                        <p className="mt-1 text-xs text-[var(--kt-muted)]">Catatan aktivitas toko ini.</p>
                       </div>
-
-                      <button
-                        type="button"
-                        disabled={historyLoading}
-                        onClick={() => void loadHistory(selected.id)}
-                        className={`${secondaryButton} px-3 py-2 text-xs`}
-                      >
-                        <Icon name="refresh" size={14} />
-                        Muat ulang
+                      <button type="button" disabled={historyLoading} onClick={() => void loadHistory(selected.id)} className={`${secondaryButton} px-3 py-2 text-xs`}>
+                        <Icon name="refresh" size={14} />Muat ulang
                       </button>
                     </div>
 
                     {historyLoading && (
-                      <div className="space-y-3">
-                        {[1, 2].map((i) => (
-                          <div
-                            key={i}
-                            className="kt-skeleton h-28 rounded-xl"
-                          />
-                        ))}
-                      </div>
+                      <div className="space-y-3">{[1, 2].map((i) => <div key={i} className="kt-skeleton h-28 rounded-xl" />)}</div>
                     )}
 
                     {historyError && !historyLoading && (
                       <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-500">
                         <p>{historyError}</p>
-                        <button
-                          type="button"
-                          onClick={() => void loadHistory(selected.id)}
-                          className="mt-2 font-bold underline underline-offset-4"
-                        >
-                          Coba lagi
-                        </button>
+                        <button type="button" onClick={() => void loadHistory(selected.id)} className="mt-2 font-bold underline underline-offset-4">Coba lagi</button>
                       </div>
                     )}
 
-                    {!historyLoading &&
-                      !historyError &&
-                      history.length === 0 && (
-                        <div className="rounded-xl border border-dashed border-[var(--kt-border)] bg-[var(--kt-subtle)] px-4 py-8 text-center">
-                          <Icon
-                            name="clock"
-                            size={22}
-                            className="mx-auto text-[var(--kt-muted)]"
-                          />
-                          <p className="mt-3 text-sm font-semibold text-[var(--kt-text)]">
-                            Belum ada riwayat transaksi
-                          </p>
-                          <p className="mt-1 text-xs text-[var(--kt-muted)]">
-                            Aktivitas stok akan tampil di sini.
-                          </p>
-                        </div>
-                      )}
+                    {!historyLoading && !historyError && history.length === 0 && (
+                      <div className="rounded-xl border border-dashed border-[var(--kt-border)] bg-[var(--kt-subtle)] px-4 py-8 text-center">
+                        <Icon name="clock" size={22} className="mx-auto text-[var(--kt-muted)]" />
+                        <p className="mt-3 text-sm font-semibold text-[var(--kt-text)]">Belum ada riwayat transaksi</p>
+                        <p className="mt-1 text-xs text-[var(--kt-muted)]">Aktivitas stok akan tampil di sini.</p>
+                      </div>
+                    )}
 
-                    {!historyLoading &&
-                      !historyError &&
-                      history.length > 0 && (
-                        <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
-                          {history.map((item) => (
-                            <article
-                              key={item.id}
-                              className="rounded-xl border border-[var(--kt-border)] bg-[var(--kt-subtle)] p-4 transition hover:border-blue-500/25"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="flex min-w-0 items-start gap-3">
-                                  <span
-                                    className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${
-                                      item.type === "add"
-                                        ? "bg-emerald-500/10 text-emerald-500"
-                                        : "bg-rose-500/10 text-rose-500"
-                                    }`}
-                                  >
-                                    <Icon
-                                      name={
-                                        item.type === "add"
-                                          ? "plus"
-                                          : "arrow-down"
-                                      }
-                                      size={17}
-                                    />
-                                  </span>
-
-                                  <div className="min-w-0">
-                                    <p className="text-sm font-bold text-[var(--kt-text)]">
-                                      {item.type === "add"
-                                        ? "Stok ditambahkan"
-                                        : "Stok terjual"}
-                                    </p>
-                                    <p className="mt-1 text-[11px] leading-5 text-[var(--kt-muted)]">
-                                      {dateLabel(item.createdAt)}
-                                    </p>
-                                  </div>
-                                </div>
-
-                                <span
-                                  className={`shrink-0 rounded-lg border px-2 py-1.5 text-[10px] font-bold sm:px-2.5 sm:text-xs ${
-                                    item.type === "add"
-                                      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-500"
-                                      : "border-rose-500/20 bg-rose-500/10 text-rose-500"
-                                  }`}
-                                >
-                                  {item.type === "add" ? "+" : "−"}
-                                  {fmt(item.amount)} unit
+                    {!historyLoading && !historyError && history.length > 0 && (
+                      <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
+                        {history.map((item) => (
+                          <article key={item.id} className="rounded-xl border border-[var(--kt-border)] bg-[var(--kt-subtle)] p-4 transition hover:border-blue-500/25">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex min-w-0 items-start gap-3">
+                                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${item.type === "add" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500"}`}>
+                                  <Icon name={item.type === "add" ? "plus" : "arrow-down"} size={17} />
                                 </span>
-                              </div>
-
-                              {item.note && (
-                                <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-[var(--kt-muted)]">
-                                  {item.note}
-                                </p>
-                              )}
-
-                              <div className="mt-3 grid grid-cols-2 gap-3 border-t border-[var(--kt-divider)] pt-3">
-                                <div>
-                                  <p className="text-[10px] uppercase tracking-wider text-[var(--kt-muted)]">
-                                    Stok sebelum
-                                  </p>
-                                  <p className="mt-1 text-sm font-bold text-[var(--kt-text)]">
-                                    {fmt(item.stockBefore)} unit
-                                  </p>
-                                </div>
-                                <div>
-                                  <p className="text-[10px] uppercase tracking-wider text-[var(--kt-muted)]">
-                                    Stok sesudah
-                                  </p>
-                                  <p className="mt-1 text-sm font-bold text-[var(--kt-text)]">
-                                    {fmt(item.stockAfter)} unit
-                                  </p>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-bold text-[var(--kt-text)]">{item.type === "add" ? "Stok ditambahkan" : "Stok terjual"}</p>
+                                  <p className="mt-1 text-[11px] leading-5 text-[var(--kt-muted)]">{dateLabel(item.createdAt)}</p>
                                 </div>
                               </div>
-                            </article>
-                          ))}
-                        </div>
-                      )}
+                              <span className={`shrink-0 rounded-lg border px-2 py-1.5 text-[10px] font-bold sm:px-2.5 sm:text-xs ${item.type === "add" ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-500" : "border-rose-500/20 bg-rose-500/10 text-rose-500"}`}>
+                                {item.type === "add" ? "+" : "−"}{fmt(item.amount)} unit
+                              </span>
+                            </div>
+                            {item.note && <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-[var(--kt-muted)]">{item.note}</p>}
+                            <div className="mt-3 grid grid-cols-2 gap-3 border-t border-[var(--kt-divider)] pt-3">
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wider text-[var(--kt-muted)]">Stok sebelum</p>
+                                <p className="mt-1 text-sm font-bold text-[var(--kt-text)]">{fmt(item.stockBefore)} unit</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wider text-[var(--kt-muted)]">Stok sesudah</p>
+                                <p className="mt-1 text-sm font-bold text-[var(--kt-text)]">{fmt(item.stockAfter)} unit</p>
+                              </div>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Hapus toko */}
                   <div className="border-t border-[var(--kt-divider)] pt-5">
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={() => {
-                        setError("");
-                        setConfirmDelete(true);
-                      }}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm font-bold text-rose-500 transition hover:border-rose-500/40 hover:bg-rose-500/10 disabled:opacity-40"
-                    >
-                      <Icon name="trash" size={16} />
-                      Hapus Toko
+                    <button type="button" disabled={saving} onClick={() => { setError(""); setConfirmDelete(true); }} className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm font-bold text-rose-500 transition hover:border-rose-500/40 hover:bg-rose-500/10 disabled:opacity-40">
+                      <Icon name="trash" size={16} />Hapus Toko
                     </button>
-                    <p className="mt-2 text-center text-[11px] text-[var(--kt-muted)]">
-                      Pastikan toko yang dipilih sudah benar.
-                    </p>
+                    <p className="mt-2 text-center text-[11px] text-[var(--kt-muted)]">Pastikan toko yang dipilih sudah benar.</p>
                   </div>
                 </div>
               </div>
@@ -1830,72 +1481,95 @@ export default function Home() {
         </div>
       )}
 
-      {/* Konfirmasi hapus */}
-      {confirmDelete && selected && (
-        <div className="kt-modal-backdrop fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-md">
-          <section
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="delete-title"
-            className="kt-modal-content kt-panel w-full max-w-md overflow-hidden rounded-3xl"
-          >
-            <div className="p-5 sm:p-7">
-              <div className="grid h-12 w-12 place-items-center rounded-2xl border border-rose-500/20 bg-rose-500/10 text-rose-500">
-                <Icon name="trash" size={21} />
+      {/* Modal edit informasi toko */}
+      {showEdit && selected && (
+        <div
+          className="kt-modal-backdrop fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-slate-950/70 p-3 backdrop-blur-md sm:p-5"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !saving) {
+              setShowEdit(false);
+              setError("");
+            }
+          }}
+        >
+          <section role="dialog" aria-modal="true" aria-labelledby="edit-title" className="kt-modal-content kt-panel my-auto max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-3xl">
+            <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-[var(--kt-divider)] bg-[var(--kt-panel)] px-5 py-5 sm:px-7">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-blue-500/20 bg-blue-500/10 text-blue-500"><Icon name="store" size={21} /></div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-[.18em] text-blue-500">Pengaturan toko</p>
+                  <h2 id="edit-title" className="mt-1 text-lg font-bold text-[var(--kt-text)]">Edit Informasi Toko</h2>
+                  <p className="mt-1 break-words text-xs text-[var(--kt-muted)]">{selected.storeName}</p>
+                </div>
               </div>
+              <button type="button" disabled={saving} onClick={() => { setShowEdit(false); setError(""); }} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[var(--kt-border)] text-[var(--kt-muted)] transition hover:bg-[var(--kt-hover)] disabled:opacity-50" aria-label="Tutup edit toko">
+                <Icon name="x" size={17} />
+              </button>
+            </header>
 
-              <p className="mt-5 text-[10px] font-bold uppercase tracking-[.2em] text-rose-500">
-                Konfirmasi tindakan
-              </p>
-              <h3
-                id="delete-title"
-                className="mt-2 text-xl font-bold text-[var(--kt-text)]"
-              >
-                Hapus toko ini?
-              </h3>
-              <p className="mt-3 text-sm leading-6 text-[var(--kt-muted)]">
-                Yakin ingin menghapus{" "}
-                <strong className="text-[var(--kt-text)]">
-                  {selected.storeName}
-                </strong>
-                ? Tindakan ini tidak bisa dibatalkan.
+            <form onSubmit={savePartnerInfo} className="space-y-4 p-5 sm:p-7">
+              <label className="block text-xs font-bold text-[var(--kt-text)]">
+                Nama toko <span className="text-rose-500">*</span>
+                <input autoFocus required maxLength={100} value={editForm.storeName} onChange={(e) => setEditForm((prev) => ({ ...prev, storeName: e.target.value }))} placeholder="Nama toko" className={`${fieldClass} h-12 font-normal`} />
+              </label>
+
+              <label className="block text-xs font-bold text-[var(--kt-text)]">
+                Nama pemilik <span className="font-normal text-[var(--kt-muted)]">(Opsional)</span>
+                <input maxLength={100} value={editForm.owner} onChange={(e) => setEditForm((prev) => ({ ...prev, owner: e.target.value }))} placeholder="Nama pemilik toko" className={`${fieldClass} h-12 font-normal`} />
+              </label>
+
+              <label className="block text-xs font-bold text-[var(--kt-text)]">
+                Nomor telepon <span className="font-normal text-[var(--kt-muted)]">(Opsional)</span>
+                <input type="tel" maxLength={30} value={editForm.phone} onChange={(e) => setEditForm((prev) => ({ ...prev, phone: e.target.value }))} placeholder="08xxxxxxxxxx" className={`${fieldClass} h-12 font-normal`} />
+              </label>
+
+              <label className="block text-xs font-bold text-[var(--kt-text)]">
+                Alamat toko <span className="font-normal text-[var(--kt-muted)]">(Opsional)</span>
+                <textarea maxLength={300} rows={3} value={editForm.address} onChange={(e) => setEditForm((prev) => ({ ...prev, address: e.target.value }))} placeholder="Alamat lengkap toko" className={`${fieldClass} resize-y p-3 font-normal`} />
+              </label>
+
+              <p className="text-xs leading-5 text-[var(--kt-muted)]">
+                Kolom bertanda * wajib diisi. Informasi lainnya boleh dikosongkan dan dilengkapi kapan saja.
               </p>
 
               {error && (
-                <p
-                  role="alert"
-                  className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-500"
-                >
-                  {error}
-                </p>
+                <p role="alert" className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-500">{error}</p>
               )}
 
-              <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row">
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => setConfirmDelete(false)}
-                  className={`${secondaryButton} flex-1`}
-                >
-                  Batal
-                </button>
-
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={removePartner}
-                  className={`${buttonBase} flex-1 bg-gradient-to-r from-rose-600 to-red-600 text-white hover:from-rose-500 hover:to-red-500`}
-                >
+              <div className="flex flex-col-reverse gap-3 border-t border-[var(--kt-divider)] pt-5 sm:flex-row">
+                <button type="button" disabled={saving} onClick={() => { setShowEdit(false); setError(""); }} className={`${secondaryButton} flex-1`}>Batal</button>
+                <button type="submit" disabled={saving} className={`${buttonBase} flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-500 hover:to-indigo-500`}>
                   {saving ? (
-                    <>
-                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                      Menghapus...
-                    </>
+                    <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />Menyimpan...</>
                   ) : (
-                    <>
-                      <Icon name="trash" size={16} />
-                      Ya, Hapus
-                    </>
+                    <><Icon name="check" size={16} />Simpan Perubahan</>
+                  )}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {/* Konfirmasi hapus */}
+      {confirmDelete && selected && (
+        <div className="kt-modal-backdrop fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-md">
+          <section role="alertdialog" aria-modal="true" aria-labelledby="delete-title" className="kt-modal-content kt-panel w-full max-w-md overflow-hidden rounded-3xl">
+            <div className="p-5 sm:p-7">
+              <div className="grid h-12 w-12 place-items-center rounded-2xl border border-rose-500/20 bg-rose-500/10 text-rose-500"><Icon name="trash" size={21} /></div>
+              <p className="mt-5 text-[10px] font-bold uppercase tracking-[.2em] text-rose-500">Konfirmasi tindakan</p>
+              <h3 id="delete-title" className="mt-2 text-xl font-bold text-[var(--kt-text)]">Hapus toko ini?</h3>
+              <p className="mt-3 text-sm leading-6 text-[var(--kt-muted)]">
+                Yakin ingin menghapus <strong className="text-[var(--kt-text)]">{selected.storeName}</strong>? Tindakan ini tidak bisa dibatalkan.
+              </p>
+              {error && <p role="alert" className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-500">{error}</p>}
+              <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row">
+                <button type="button" disabled={saving} onClick={() => { setConfirmDelete(false); setError(""); }} className={`${secondaryButton} flex-1`}>Batal</button>
+                <button type="button" disabled={saving} onClick={removePartner} className={`${buttonBase} flex-1 bg-gradient-to-r from-rose-600 to-red-600 text-white hover:from-rose-500 hover:to-red-500`}>
+                  {saving ? (
+                    <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />Menghapus...</>
+                  ) : (
+                    <><Icon name="trash" size={16} />Ya, Hapus</>
                   )}
                 </button>
               </div>
@@ -1904,13 +1578,17 @@ export default function Home() {
         </div>
       )}
 
-      {/* Toast notifikasi */}
+      {/* Toast: tengah atas, aman dari notch/status bar */}
       {notice && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-5 z-[100] flex justify-center px-4 sm:bottom-7">
+        <div
+          className="pointer-events-none fixed inset-x-0 top-0 z-[100] flex justify-center px-3 sm:px-5"
+          style={{ paddingTop: "max(12px, env(safe-area-inset-top, 0px))" }}
+        >
           <div
-            role="status"
-            aria-live="polite"
-            className={`kt-toast pointer-events-auto relative flex w-full max-w-md items-start gap-3 overflow-hidden rounded-2xl border px-4 py-3.5 shadow-2xl backdrop-blur-2xl sm:px-5 ${
+            key={`${toastType}-${notice}`}
+            role={toastType === "error" ? "alert" : "status"}
+            aria-live={toastType === "error" ? "assertive" : "polite"}
+            className={`kt-toast pointer-events-auto relative flex w-full max-w-md items-start gap-3 overflow-hidden rounded-2xl border p-3.5 shadow-2xl backdrop-blur-2xl sm:p-4 ${
               toastType === "success"
                 ? "border-emerald-500/20 bg-[var(--kt-panel)]"
                 : toastType === "error"
@@ -1918,46 +1596,27 @@ export default function Home() {
                   : "border-blue-500/20 bg-[var(--kt-panel)]"
             }`}
           >
-            <span
-              className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl ${
-                toastType === "success"
-                  ? "bg-emerald-500/10 text-emerald-500"
-                  : toastType === "error"
-                    ? "bg-rose-500/10 text-rose-500"
-                    : "bg-blue-500/10 text-blue-500"
-              }`}
-            >
-              <Icon
-                name={
-                  toastType === "success"
-                    ? "check"
-                    : toastType === "error"
-                      ? "alert"
-                      : "clock"
-                }
-                size={17}
-              />
+            <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl ${
+              toastType === "success"
+                ? "bg-emerald-500/10 text-emerald-500"
+                : toastType === "error"
+                  ? "bg-rose-500/10 text-rose-500"
+                  : "bg-blue-500/10 text-blue-500"
+            }`}>
+              <Icon name={toastType === "success" ? "check" : toastType === "error" ? "alert" : "clock"} size={17} />
             </span>
 
             <div className="min-w-0 flex-1 pt-0.5">
-              <p
-                className={`text-xs font-bold ${
-                  toastType === "success"
-                    ? "text-emerald-500"
-                    : toastType === "error"
-                      ? "text-rose-500"
-                      : "text-blue-500"
-                }`}
-              >
-                {toastType === "success"
-                  ? "Berhasil"
+              <p className={`text-xs font-bold ${
+                toastType === "success"
+                  ? "text-emerald-500"
                   : toastType === "error"
-                    ? "Terjadi kesalahan"
-                    : "Informasi"}
+                    ? "text-rose-500"
+                    : "text-blue-500"
+              }`}>
+                {toastType === "success" ? "Berhasil" : toastType === "error" ? "Terjadi kesalahan" : "Informasi"}
               </p>
-              <p className="mt-1 break-words text-sm leading-5 text-[var(--kt-muted)]">
-                {notice}
-              </p>
+              <p className="mt-1 break-words text-sm leading-5 text-[var(--kt-muted)]">{notice}</p>
             </div>
 
             <button
@@ -1972,16 +1631,13 @@ export default function Home() {
               <Icon name="x" size={16} />
             </button>
 
-            <span
-              key={notice}
-              className={`kt-toast-progress absolute bottom-0 left-0 h-[2px] w-full ${
-                toastType === "success"
-                  ? "bg-emerald-500"
-                  : toastType === "error"
-                    ? "bg-rose-500"
-                    : "bg-blue-500"
-              }`}
-            />
+            <span className={`kt-toast-progress absolute bottom-0 left-0 h-[3px] w-full ${
+              toastType === "success"
+                ? "bg-emerald-500"
+                : toastType === "error"
+                  ? "bg-rose-500"
+                  : "bg-blue-500"
+            }`} />
           </div>
         </div>
       )}

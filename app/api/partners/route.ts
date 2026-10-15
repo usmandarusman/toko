@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
   try {
     const body: unknown = await request.json();
 
-    if (!body || typeof body !== "object") {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json(
         { error: "Data toko tidak valid." },
         { status: 400 }
@@ -69,7 +69,9 @@ export async function POST(request: NextRequest) {
     const data = body as Record<string, unknown>;
 
     const storeName =
-      typeof data.storeName === "string" ? data.storeName.trim() : "";
+      typeof data.storeName === "string"
+        ? data.storeName.trim()
+        : "";
     const owner =
       typeof data.owner === "string" ? data.owner.trim() : "";
     const phone =
@@ -77,9 +79,9 @@ export async function POST(request: NextRequest) {
     const address =
       typeof data.address === "string" ? data.address.trim() : "";
 
-    if (!storeName || !owner || !phone || !address) {
+    if (!storeName) {
       return NextResponse.json(
-        { error: "Lengkapi semua informasi toko." },
+        { error: "Nama toko wajib diisi." },
         { status: 400 }
       );
     }
