@@ -24,3 +24,145 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+
+/* =========================================
+   KERUPUK TAHU — THEME SYSTEM
+   ========================================= */
+
+:root {
+  color-scheme: dark;
+  --kt-bg: #090b10;
+  --kt-panel: rgba(19, 22, 31, 0.88);
+  --kt-panel-solid: #13161f;
+  --kt-field: #10131b;
+  --kt-text: #f4f6fb;
+  --kt-muted: #969daf;
+  --kt-border: rgba(255, 255, 255, 0.09);
+  --kt-hover: rgba(255, 255, 255, 0.055);
+  --kt-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --kt-bg: #f4f6fb;
+  --kt-panel: rgba(255, 255, 255, 0.92);
+  --kt-panel-solid: #ffffff;
+  --kt-field: #f5f7fb;
+  --kt-text: #202638;
+  --kt-muted: #687086;
+  --kt-border: rgba(27, 39, 64, 0.12);
+  --kt-hover: rgba(27, 39, 64, 0.045);
+  --kt-shadow: 0 16px 48px rgba(35, 48, 75, 0.08);
+}
+
+html,
+body {
+  min-height: 100%;
+  background: var(--kt-bg);
+  color: var(--kt-text);
+  transition:
+    background-color 250ms ease,
+    color 250ms ease;
+}
+
+body {
+  margin: 0;
+}
+
+* {
+  transition:
+    background-color 220ms ease,
+    border-color 220ms ease,
+    color 180ms ease,
+    box-shadow 220ms ease;
+}
+
+/* Gunakan class yang sudah ada pada dashboard */
+
+.kt-app {
+  min-height: 100vh;
+  background: var(--kt-bg);
+  color: var(--kt-text);
+}
+
+.kt-panel {
+  background: var(--kt-panel);
+  border-color: var(--kt-border);
+  box-shadow: var(--kt-shadow);
+  backdrop-filter: blur(18px);
+}
+
+.kt-field {
+  background: var(--kt-field);
+  color: var(--kt-text);
+  border: 1px solid var(--kt-border);
+}
+
+.kt-field::placeholder {
+  color: var(--kt-muted);
+}
+
+.kt-skeleton {
+  background: var(--kt-hover);
+}
+
+/* Warna teks yang mengikuti tema */
+
+.kt-app .text-white,
+.kt-app .text-slate-100,
+.kt-app .text-slate-200,
+.kt-app .text-gray-100,
+.kt-app .text-gray-200 {
+  color: var(--kt-text);
+}
+
+.kt-app .text-slate-400,
+.kt-app .text-slate-500,
+.kt-app .text-gray-400,
+.kt-app .text-gray-500 {
+  color: var(--kt-muted);
+}
+
+/* Panel, tabel, dan elemen dengan latar gelap */
+
+html[data-theme="light"] .kt-app .bg-slate-950,
+html[data-theme="light"] .kt-app .bg-slate-900,
+html[data-theme="light"] .kt-app .bg-gray-950,
+html[data-theme="light"] .kt-app .bg-gray-900 {
+  background-color: var(--kt-panel-solid);
+}
+
+html[data-theme="light"] .kt-app .border-white\/5,
+html[data-theme="light"] .kt-app .border-white\/10,
+html[data-theme="light"] .kt-app .border-slate-800 {
+  border-color: var(--kt-border);
+}
+
+html[data-theme="light"] .kt-app tr:hover,
+html[data-theme="light"] .kt-app button:hover {
+  --tw-bg-opacity: 1;
+}
+
+/* Modal dan notifikasi */
+
+.kt-app [role="dialog"],
+.kt-app .kt-modal {
+  color: var(--kt-text);
+}
+
+html[data-theme="light"] .kt-app .kt-panel {
+  background: var(--kt-panel-solid);
+}
+
+/* Kurangi animasi jika pengguna mengaturnya di sistem */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

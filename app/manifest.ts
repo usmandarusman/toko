@@ -1,0 +1,29 @@
+
+import type { MetadataRoute } from "next";
+
+export default function manifest(): MetadataRoute.Manifest {
+  return {
+    id: "/",
+    name: "Kerupuk Tahu HSM",
+    short_name: "Kerupuk Tahu",
+    description: "Dashboard pengelolaan mitra dan stok Kerupuk Tahu",
+    start_url: "/",
+    scope: "/",
+    display: "standalone",
+    background_color: "#0B1020",
+    theme_color: "#0B1020",
+    orientation: "portrait",
+    icons: [
+      {
+        src: "/icon-192.png",
+        sizes: "192x192",
+        type: "image/png",
+      },
+      {
+        src: "/icon-512.png",
+        sizes: "512x512",
+        type: "image/png",
+      },
+    ],
+  };
+}
