@@ -76,7 +76,7 @@ function Dashboard() {
   const [history, setHistory] = useState<StockHistory[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
-  const DEFAULT_SHOP_NAME = "Kerupuk Tahu";
+  const DEFAULT_SHOP_NAME = "IncomeOn";
 
 const [shopName, setShopName] = useState(DEFAULT_SHOP_NAME);
 const [shopLogo, setShopLogo] = useState("");
@@ -570,6 +570,7 @@ function handleShopLogoChange(
   reader.readAsDataURL(file);
 }
 
+
 function saveBrandSettings() {
   const cleanName = shopNameDraft.trim();
 
@@ -584,8 +585,11 @@ function saveBrandSettings() {
   }
 
   try {
+    // Key tetap sama, sehingga nilai lama ditimpa.
     localStorage.setItem("kt-shop-name", cleanName);
 
+    // Timpa logo lama dengan logo baru.
+    // Jika logo dihapus, hapus nilai pada key yang sama.
     if (shopLogoDraft) {
       localStorage.setItem("kt-shop-logo", shopLogoDraft);
     } else {
@@ -605,6 +609,7 @@ function saveBrandSettings() {
     );
   }
 }
+
 
 
   return (

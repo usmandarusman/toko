@@ -18,7 +18,11 @@ type Props = {
   children: ReactNode;
 };
 
-const DEFAULT_SHOP_NAME = "Kerupuk Tahu";
+const DEFAULT_SHOP_NAME = "IncomeOn";
+const MAX_LOGO_SIZE = 5 * 1024 * 1024;
+
+const SHOP_NAME_KEY = "kt-shop-name";
+const SHOP_LOGO_KEY = "kt-shop-logo";
 
 export default function AuthGate({ children }: Props) {
   const [user, setUser] = useState<User | null>(null);
@@ -30,6 +34,13 @@ export default function AuthGate({ children }: Props) {
   const [shopLogo, setShopLogo] = useState("");
   const [shopLoaded, setShopLoaded] = useState(false);
 
+  const [setupComplete, setSetupComplete] = useState(false);
+  const [setupName, setSetupName] = useState("");
+  const [setupLogo, setSetupLogo] = useState("");
+  const [setupError, setSetupError] = useState("");
+  const [savingSetup, setSavingSetup] = useState(false);
+
+  // Memeriksa sesi login Google.
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
@@ -39,32 +50,64 @@ export default function AuthGate({ children }: Props) {
     return unsubscribe;
   }, []);
 
-  // Ambil identitas lokal sesuai akun Google yang sedang login.
+  // Membaca identitas toko menggunakan key yang sama dengan Dashboard.
   useEffect(() => {
     if (!user) {
       setShopName(DEFAULT_SHOP_NAME);
       setShopLogo("");
       setShopLoaded(false);
+      setSetupComplete(false);
+      setSetupName("");
+      setSetupLogo("");
+      setSetupError("");
       return;
     }
 
     setShopLoaded(false);
+    setSetupError("");
 
     try {
-      const savedName = localStorage.getItem(
-        `kt-shop-name:${user.uid}`
-      );
+      // Key utama yang dipakai AuthGate dan Dashboard.
+      let savedName = localStorage.getItem(SHOP_NAME_KEY)?.trim() || "";
+      let savedLogo = localStorage.getItem(SHOP_LOGO_KEY) || "";
 
-      const savedLogo = localStorage.getItem(
-        `kt-shop-logo:${user.uid}`
-      );
+      // Kompatibilitas dengan key lama dari versi sebelumnya.
+      const legacyName =
+        localStorage.getItem(`kt-shop-name:${user.uid}`)?.trim() ||
+        localStorage.getItem("shopName")?.trim() ||
+        "";
 
-      setShopName(savedName?.trim() || DEFAULT_SHOP_NAME);
-      setShopLogo(savedLogo || "");
+      const legacyLogo =
+        localStorage.getItem(`kt-shop-logo:${user.uid}`) ||
+        localStorage.getItem("shopLogo") ||
+        "";
+
+      // Migrasikan nilai lama hanya jika key utama belum memiliki nilai.
+      // Jangan menimpa data utama yang sudah ada dengan data lama.
+      if (!savedName && legacyName) {
+        localStorage.setItem(SHOP_NAME_KEY, legacyName);
+        savedName = legacyName;
+      }
+
+      if (!savedLogo && legacyLogo) {
+        localStorage.setItem(SHOP_LOGO_KEY, legacyLogo);
+        savedLogo = legacyLogo;
+      }
+
+      setShopName(savedName || DEFAULT_SHOP_NAME);
+      setShopLogo(savedLogo);
+
+      setSetupName(savedName);
+      setSetupLogo(savedLogo);
+
+      // Setup hanya dilewati jika nama dan logo sama-sama tersedia.
+      setSetupComplete(Boolean(savedName && savedLogo));
     } catch (err) {
       console.error("Gagal membaca identitas toko:", err);
-      setShopName(DEFAULT_SHOP_NAME);
-      setShopLogo("");
+
+      // Jangan menghapus data saat terjadi kegagalan membaca/menulis.
+      // Jika identitas sebelumnya sudah terbaca, pertahankan nilainya.
+      setSetupComplete(false);
     } finally {
       setShopLoaded(true);
     }
@@ -83,6 +126,8 @@ export default function AuthGate({ children }: Props) {
 
       await signInWithPopup(auth, provider);
     } catch (err) {
+      console.error("Login Google gagal:", err);
+
       setError(
         err instanceof Error
           ? err.message
@@ -106,7 +151,8 @@ export default function AuthGate({ children }: Props) {
     }
   }
 
-  // Simpan nama dan logo lokal untuk akun yang sedang login.
+  // Menyimpan identitas toko ke key yang tetap.
+  // Pemanggilan setItem pada key yang sama akan menimpa nilainya.
   function updateShopIdentity({
     shopName: nextName,
     shopLogo: nextLogo,
@@ -124,27 +170,137 @@ export default function AuthGate({ children }: Props) {
       throw new Error("Nama toko wajib diisi.");
     }
 
-    const nameKey = `kt-shop-name:${user.uid}`;
-    const logoKey = `kt-shop-logo:${user.uid}`;
+    if (name.length > 80) {
+      throw new Error("Nama toko maksimal 80 karakter.");
+    }
+
+    if (!nextLogo) {
+      throw new Error("Logo toko wajib dipilih.");
+    }
 
     try {
-      localStorage.setItem(nameKey, name);
+      const previousName = localStorage.getItem(SHOP_NAME_KEY);
+      const previousLogo = localStorage.getItem(SHOP_LOGO_KEY);
 
-      if (nextLogo) {
-        localStorage.setItem(logoKey, nextLogo);
-      } else {
-        localStorage.removeItem(logoKey);
+      try {
+        // Selalu gunakan dua key yang sama.
+        localStorage.setItem(SHOP_NAME_KEY, name);
+        localStorage.setItem(SHOP_LOGO_KEY, nextLogo);
+      } catch (storageError) {
+        // Coba pulihkan nilai sebelumnya jika penyimpanan gagal.
+        try {
+          if (previousName === null) {
+            localStorage.removeItem(SHOP_NAME_KEY);
+          } else {
+            localStorage.setItem(SHOP_NAME_KEY, previousName);
+          }
+
+          if (previousLogo === null) {
+            localStorage.removeItem(SHOP_LOGO_KEY);
+          } else {
+            localStorage.setItem(SHOP_LOGO_KEY, previousLogo);
+          }
+        } catch (rollbackError) {
+          console.error(
+            "Gagal memulihkan identitas toko:",
+            rollbackError
+          );
+        }
+
+        throw storageError;
       }
 
       setShopName(name);
       setShopLogo(nextLogo);
+      setSetupName(name);
+      setSetupLogo(nextLogo);
     } catch (err) {
       console.error("Gagal menyimpan identitas toko:", err);
 
       throw new Error(
-        "Gagal menyimpan identitas. Coba gunakan logo yang lebih kecil."
+        "Gagal menyimpan nama atau logo. Coba gunakan gambar yang lebih kecil."
       );
     }
+  }
+
+  async function completeShopSetup() {
+    setSetupError("");
+
+    const name = setupName.trim();
+
+    if (!name) {
+      setSetupError("Nama toko wajib diisi.");
+      return;
+    }
+
+    if (name.length > 80) {
+      setSetupError("Nama toko maksimal 80 karakter.");
+      return;
+    }
+
+    if (!setupLogo) {
+      setSetupError("Silakan pilih logo toko terlebih dahulu.");
+      return;
+    }
+
+    setSavingSetup(true);
+
+    try {
+      updateShopIdentity({
+        shopName: name,
+        shopLogo: setupLogo,
+      });
+
+      setSetupComplete(true);
+    } catch (err) {
+      setSetupError(
+        err instanceof Error
+          ? err.message
+          : "Gagal menyimpan identitas toko."
+      );
+    } finally {
+      setSavingSetup(false);
+    }
+  }
+
+  function handleLogoChange(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    setSetupError("");
+
+    if (!file.type.startsWith("image/")) {
+      setSetupError("File harus berupa gambar.");
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > MAX_LOGO_SIZE) {
+      setSetupError(
+        "Ukuran logo maksimal 5 MB. Silakan pilih gambar yang lebih kecil."
+      );
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setSetupLogo(reader.result);
+      } else {
+        setSetupError("Gagal membaca gambar. Silakan coba lagi.");
+      }
+    };
+
+    reader.onerror = () => {
+      setSetupError("Gagal membaca gambar. Silakan coba lagi.");
+    };
+
+    reader.readAsDataURL(file);
   }
 
   if (checking) {
@@ -160,6 +316,7 @@ export default function AuthGate({ children }: Props) {
     );
   }
 
+  // Halaman login Google.
   if (!user) {
     return (
       <main className="relative grid min-h-screen place-items-center overflow-hidden bg-[#070b14] px-5 py-10 text-white">
@@ -197,7 +354,7 @@ export default function AuthGate({ children }: Props) {
           </div>
 
           <p className="text-[10px] font-bold uppercase tracking-[.24em] text-blue-300">
-            Secure workspace
+            IncomeOn workspace
           </p>
 
           <h1 className="mt-3 text-3xl font-semibold tracking-tight">
@@ -264,7 +421,182 @@ export default function AuthGate({ children }: Props) {
   if (!shopLoaded) {
     return (
       <main className="grid min-h-screen place-items-center bg-[#070b14] text-white">
-        <span className="h-8 w-8 animate-spin rounded-full border-2 border-blue-400/20 border-t-blue-400" />
+        <div className="text-center">
+          <span className="mx-auto block h-8 w-8 animate-spin rounded-full border-2 border-blue-400/20 border-t-blue-400" />
+          <p className="mt-4 text-sm text-slate-400">
+            Memuat identitas toko...
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  // Halaman setup wajib sebelum dashboard.
+  if (!setupComplete) {
+    return (
+      <main className="relative grid min-h-screen place-items-center overflow-hidden bg-[#070b14] px-5 py-10 text-white">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 overflow-hidden"
+        >
+          <div className="absolute -left-32 -top-32 h-96 w-96 rounded-full bg-blue-600/20 blur-[110px]" />
+          <div className="absolute -bottom-40 -right-24 h-96 w-96 rounded-full bg-cyan-500/10 blur-[110px]" />
+          <div
+            className="absolute inset-0 opacity-[0.07]"
+            style={{
+              backgroundImage:
+                "linear-gradient(rgba(148,163,184,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.2) 1px, transparent 1px)",
+              backgroundSize: "44px 44px",
+            }}
+          />
+        </div>
+
+        <section className="relative w-full max-w-lg rounded-[28px] border border-white/10 bg-slate-900/80 p-6 shadow-2xl shadow-blue-950/30 backdrop-blur-xl sm:p-9">
+          <div className="mb-6 grid h-14 w-14 place-items-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
+            <svg
+              viewBox="0 0 24 24"
+              className="h-7 w-7"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              aria-hidden="true"
+            >
+              <path d="M3 10h18l-2-7H5l-2 7Z" />
+              <path d="M5 10v10h14V10" />
+              <path d="M3 10a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0" />
+            </svg>
+          </div>
+
+          <p className="text-[10px] font-bold uppercase tracking-[.24em] text-cyan-300">
+            Workspace setup
+          </p>
+
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
+            Siapkan toko kamu
+          </h1>
+
+          <p className="mt-3 text-sm leading-6 text-slate-400">
+            Lengkapi nama dan logo toko sebelum mulai menggunakan IncomeOn.
+          </p>
+
+          <form
+            className="mt-7 space-y-5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void completeShopSetup();
+            }}
+          >
+            <div>
+              <label
+                htmlFor="setup-shop-name"
+                className="mb-2 block text-sm font-medium text-slate-200"
+              >
+                Nama toko
+              </label>
+
+              <input
+                id="setup-shop-name"
+                type="text"
+                value={setupName}
+                onChange={(event) => setSetupName(event.target.value)}
+                placeholder="Contoh: Toko Berkah"
+                maxLength={80}
+                autoComplete="organization"
+                required
+                className="min-h-12 w-full rounded-xl border border-white/10 bg-slate-950/70 px-4 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/10"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="setup-shop-logo"
+                className="mb-2 block text-sm font-medium text-slate-200"
+              >
+                Logo toko
+              </label>
+
+              <label
+                htmlFor="setup-shop-logo"
+                className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 bg-slate-950/40 px-5 py-7 text-center transition hover:border-cyan-400/50 hover:bg-cyan-400/5"
+              >
+                {setupLogo ? (
+                  <img
+                    src={setupLogo}
+                    alt="Preview logo toko"
+                    className="h-24 w-24 rounded-2xl border border-white/10 bg-white/5 object-contain p-2"
+                  />
+                ) : (
+                  <div className="grid h-16 w-16 place-items-center rounded-2xl bg-white/5 text-slate-400">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-8 w-8"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      aria-hidden="true"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="4" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <path d="m21 15-5-5L5 21" />
+                    </svg>
+                  </div>
+                )}
+
+                <span className="mt-4 text-sm font-medium text-slate-200">
+                  {setupLogo ? "Ganti logo toko" : "Pilih gambar logo"}
+                </span>
+
+                <span className="mt-1 text-xs text-slate-500">
+                  PNG, JPG, WEBP, atau GIF · Maksimal 5 MB
+                </span>
+              </label>
+
+              <input
+                id="setup-shop-logo"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                className="sr-only"
+                onChange={handleLogoChange}
+              />
+            </div>
+
+            {setupError && (
+              <p
+                role="alert"
+                className="break-words rounded-xl border border-rose-400/20 bg-rose-500/10 p-3 text-sm text-rose-200"
+              >
+                {setupError}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={savingSetup}
+              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/30 transition hover:brightness-110 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {savingSetup ? (
+                <>
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  Menyimpan identitas...
+                </>
+              ) : (
+                "Simpan dan masuk dashboard"
+              )}
+            </button>
+          </form>
+
+          <button
+            type="button"
+            onClick={() => void logout().catch(() => {})}
+            className="mt-4 w-full rounded-xl px-4 py-3 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white"
+          >
+            Keluar dari akun
+          </button>
+
+          <p className="mt-4 text-center text-xs leading-5 text-slate-500">
+            Identitas toko disimpan di browser ini.
+          </p>
+        </section>
       </main>
     );
   }
