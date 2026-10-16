@@ -166,3 +166,15 @@ html[data-theme="light"] .kt-app .kt-panel {
     transition-duration: 0.01ms !important;
   }
 }
+
+
+.sales-auth-bg {
+  background:
+    radial-gradient(
+      ellipse at 50% -20%,
+      rgba(37, 99, 235, 0.12),
+      transparent 55%
+    ),
+    #080c17;
+  color-scheme: dark;
+}
