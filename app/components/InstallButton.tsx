@@ -1,7 +1,9 @@
 
+/* eslint-disable react-hooks/set-state-in-effect */
+
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -11,37 +13,65 @@ type BeforeInstallPromptEvent = Event & {
   }>;
 };
 
+/**
+ * Simpan event di luar komponen agar tidak hilang
+ * ketika InstallButton unmount dan mount kembali.
+ */
+let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
+
+const PROMPT_READY_EVENT = "incomeon-install-prompt-ready";
+
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeinstallprompt", (event: Event) => {
+    event.preventDefault();
+
+    deferredInstallPrompt = event as BeforeInstallPromptEvent;
+
+    window.dispatchEvent(new Event(PROMPT_READY_EVENT));
+
+    console.info("[PWA] Install prompt tersimpan");
+  });
+
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+
+    window.dispatchEvent(new Event(PROMPT_READY_EVENT));
+
+    console.info("[PWA] Aplikasi berhasil di-install");
+  });
+}
+
 export default function InstallButton() {
   const [installPrompt, setInstallPrompt] =
-    useState<BeforeInstallPromptEvent | null>(null);
+    useState<BeforeInstallPromptEvent | null>(
+      deferredInstallPrompt
+    );
 
   const [isInstalled, setIsInstalled] = useState(false);
   const [message, setMessage] = useState("");
   const [installing, setInstalling] = useState(false);
 
+  const checkInstalled = useCallback(() => {
+    const standalone = window.matchMedia(
+      "(display-mode: standalone)"
+    ).matches;
+
+    const iosStandalone = (
+      navigator as Navigator & { standalone?: boolean }
+    ).standalone === true;
+
+    setIsInstalled(standalone || iosStandalone);
+  }, []);
+
   useEffect(() => {
-    const checkInstalled = () => {
-      const standalone = window.matchMedia(
-        "(display-mode: standalone)"
-      ).matches;
-
-      const iosStandalone = (
-        navigator as Navigator & { standalone?: boolean }
-      ).standalone === true;
-
-      setIsInstalled(standalone || iosStandalone);
-    };
-
-    const handleBeforeInstall = (event: Event) => {
-      event.preventDefault();
-
-      setInstallPrompt(event as BeforeInstallPromptEvent);
-      setMessage("");
+    const syncPrompt = () => {
+      setInstallPrompt(deferredInstallPrompt);
     };
 
     const handleInstalled = () => {
-      setIsInstalled(true);
+      deferredInstallPrompt = null;
       setInstallPrompt(null);
+      setIsInstalled(true);
       setInstalling(false);
       setMessage("");
     };
@@ -50,38 +80,38 @@ export default function InstallButton() {
       "(display-mode: standalone)"
     );
 
-    checkInstalled();
-
-    window.addEventListener(
-      "beforeinstallprompt",
-      handleBeforeInstall
-    );
-
+    // Pasang listener dahulu, baru sinkronkan state.
+    window.addEventListener(PROMPT_READY_EVENT, syncPrompt);
     window.addEventListener("appinstalled", handleInstalled);
     displayMode.addEventListener("change", checkInstalled);
 
+    checkInstalled();
+    syncPrompt();
+
     return () => {
-      window.removeEventListener(
-        "beforeinstallprompt",
-        handleBeforeInstall
-      );
-
-      window.removeEventListener(
-        "appinstalled",
-        handleInstalled
-      );
-
+      window.removeEventListener(PROMPT_READY_EVENT, syncPrompt);
+      window.removeEventListener("appinstalled", handleInstalled);
       displayMode.removeEventListener("change", checkInstalled);
     };
-  }, []);
+  }, [checkInstalled]);
 
   const handleInstall = async () => {
     if (installing || isInstalled) return;
 
-    if (!installPrompt) {
+    // Gunakan state terbaru, termasuk event yang diterima
+    // sebelum komponen ini dipasang.
+    const promptEvent =
+      deferredInstallPrompt ?? installPrompt;
+
+    if (!promptEvent) {
       setMessage(
-        "Dialog instalasi belum tersedia. Gunakan menu ⋮ Chrome → Install app. Jika opsi tersebut tersedia, website dapat di-install, tetapi browser belum memberikan dialog ke tombol ini."
+        "Dialog instalasi belum tersedia. Muat ulang website dan coba lagi, atau gunakan menu ⋮ Chrome → Install app."
       );
+
+      console.warn(
+        "[PWA] Tidak ada beforeinstallprompt yang tersedia."
+      );
+
       return;
     }
 
@@ -89,13 +119,18 @@ export default function InstallButton() {
     setMessage("");
 
     try {
-      const promptEvent = installPrompt;
-
+      // Prompt hanya boleh dipakai satu kali.
+      deferredInstallPrompt = null;
       setInstallPrompt(null);
 
       await promptEvent.prompt();
 
       const choice = await promptEvent.userChoice;
+
+      console.info(
+        "[PWA] Hasil instalasi:",
+        choice.outcome
+      );
 
       if (choice.outcome === "accepted") {
         setMessage("Permintaan instalasi diterima.");
@@ -103,10 +138,10 @@ export default function InstallButton() {
         setMessage("Instalasi dibatalkan.");
       }
     } catch (error) {
-      console.error("Gagal memulai instalasi PWA:", error);
+      console.error("[PWA] Gagal membuka prompt:", error);
 
       setMessage(
-        "Instalasi gagal dimulai. Muat ulang website lalu coba lagi."
+        "Dialog instalasi gagal dibuka. Muat ulang website dan coba lagi."
       );
     } finally {
       setInstalling(false);
