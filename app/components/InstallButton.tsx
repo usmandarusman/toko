@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/set-state-in-effect */
 
 "use client";
 
@@ -17,34 +16,53 @@ export default function InstallButton() {
     useState<BeforeInstallPromptEvent | null>(null);
 
   const [isInstalled, setIsInstalled] = useState(false);
+  const [message, setMessage] = useState("");
+  const [installing, setInstalling] = useState(false);
 
   useEffect(() => {
+    const checkInstalled = () => {
+      const standalone = window.matchMedia(
+        "(display-mode: standalone)"
+      ).matches;
+
+      const iosStandalone = (
+        navigator as Navigator & { standalone?: boolean }
+      ).standalone === true;
+
+      setIsInstalled(standalone || iosStandalone);
+    };
+
     const handleBeforeInstall = (event: Event) => {
       event.preventDefault();
 
-      setInstallPrompt(
-        event as BeforeInstallPromptEvent
-      );
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+      setMessage("");
     };
 
     const handleInstalled = () => {
       setIsInstalled(true);
       setInstallPrompt(null);
+      setInstalling(false);
+      setMessage("");
     };
 
-    if (
-      window.matchMedia("(display-mode: standalone)").matches ||
-      (navigator as Navigator & { standalone?: boolean }).standalone
-    ) {
-      setIsInstalled(true);
-    }
+    const displayMode = window.matchMedia(
+      "(display-mode: standalone)"
+    );
+
+    checkInstalled();
 
     window.addEventListener(
       "beforeinstallprompt",
       handleBeforeInstall
     );
 
-    window.addEventListener("appinstalled", handleInstalled);
+    window.addEventListener(
+      "appinstalled",
+      handleInstalled
+    );
+
+    displayMode.addEventListener("change", checkInstalled);
 
     return () => {
       window.removeEventListener(
@@ -56,35 +74,77 @@ export default function InstallButton() {
         "appinstalled",
         handleInstalled
       );
+
+      displayMode.removeEventListener(
+        "change",
+        checkInstalled
+      );
     };
   }, []);
 
   const handleInstall = async () => {
+    if (installing || isInstalled) return;
+
     if (!installPrompt) {
-      alert(
-        "Instalasi otomatis belum tersedia. Buka menu browser, lalu pilih Install app atau Tambahkan ke layar utama."
+      setMessage(
+        "Instalasi langsung belum tersedia. Pastikan website memenuhi syarat PWA, lalu coba menu browser."
       );
       return;
     }
 
-    await installPrompt.prompt();
+    setInstalling(true);
+    setMessage("");
 
-    const choice = await installPrompt.userChoice;
+    try {
+      const promptEvent = installPrompt;
 
-    if (choice.outcome === "accepted") {
+      // Kosongkan prompt lama agar tidak digunakan ulang.
       setInstallPrompt(null);
+
+      await promptEvent.prompt();
+
+      const choice = await promptEvent.userChoice;
+
+      if (choice.outcome === "accepted") {
+        setMessage("Permintaan instalasi diterima.");
+      } else {
+        setMessage("Instalasi dibatalkan.");
+      }
+    } catch (error) {
+      console.error("Gagal memulai instalasi PWA:", error);
+
+      setMessage(
+        "Instalasi gagal dimulai. Muat ulang website dan coba lagi."
+      );
+    } finally {
+      setInstalling(false);
     }
   };
 
   if (isInstalled) return null;
 
   return (
-    <button
-      type="button"
-      onClick={handleInstall}
-      className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-400/30 bg-indigo-500 px-2 py-1 text-xs font-semibold text-white shadow-lg shadow-indigo-500/20 transition duration-200 hover:-translate-y-0.5 hover:bg-indigo-600 hover:shadow-indigo-500/30 active:translate-y-0"
-    >
-      <span className="text-sm">Install App</span>
-    </button>
+    <div className="flex flex-col items-end gap-1.5">
+      <button
+        type="button"
+        onClick={handleInstall}
+        disabled={installing}
+        className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-400/30 bg-indigo-500 px-2 py-1 text-xs font-semibold text-white shadow-lg shadow-indigo-500/20 transition duration-200 hover:-translate-y-0.5 hover:bg-indigo-600 hover:shadow-indigo-500/30 active:translate-y-0 disabled:cursor-wait disabled:opacity-60"
+      >
+        <span className="text-sm">
+          {installing ? "Memproses..." : "Install App"}
+        </span>
+      </button>
+
+      {message && (
+        <p
+          role="status"
+          aria-live="polite"
+          className="max-w-[220px] text-right text-[11px] leading-4 text-[var(--kt-muted)]"
+        >
+          {message}
+        </p>
+      )}
+    </div>
   );
 }
