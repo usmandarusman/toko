@@ -57,11 +57,7 @@ export default function InstallButton() {
       handleBeforeInstall
     );
 
-    window.addEventListener(
-      "appinstalled",
-      handleInstalled
-    );
-
+    window.addEventListener("appinstalled", handleInstalled);
     displayMode.addEventListener("change", checkInstalled);
 
     return () => {
@@ -75,10 +71,7 @@ export default function InstallButton() {
         handleInstalled
       );
 
-      displayMode.removeEventListener(
-        "change",
-        checkInstalled
-      );
+      displayMode.removeEventListener("change", checkInstalled);
     };
   }, []);
 
@@ -87,7 +80,7 @@ export default function InstallButton() {
 
     if (!installPrompt) {
       setMessage(
-        "Instalasi langsung belum tersedia. Pastikan website memenuhi syarat PWA, lalu coba menu browser."
+        "Dialog instalasi belum tersedia. Gunakan menu ⋮ Chrome → Install app. Jika opsi tersebut tersedia, website dapat di-install, tetapi browser belum memberikan dialog ke tombol ini."
       );
       return;
     }
@@ -98,7 +91,6 @@ export default function InstallButton() {
     try {
       const promptEvent = installPrompt;
 
-      // Kosongkan prompt lama agar tidak digunakan ulang.
       setInstallPrompt(null);
 
       await promptEvent.prompt();
@@ -114,7 +106,7 @@ export default function InstallButton() {
       console.error("Gagal memulai instalasi PWA:", error);
 
       setMessage(
-        "Instalasi gagal dimulai. Muat ulang website dan coba lagi."
+        "Instalasi gagal dimulai. Muat ulang website lalu coba lagi."
       );
     } finally {
       setInstalling(false);

@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     id: "/",
     name: "IncomeOn",
     short_name: "IncomeOn",
-    description: "Dashboard pengelolaan mitra dan stok Kerupuk Tahu",
+    description: "Dashboard pengelolaan mitra dan stok",
     start_url: "/",
     scope: "/",
     display: "standalone",
@@ -18,11 +18,13 @@ export default function manifest(): MetadataRoute.Manifest {
         src: "/icon-192.png",
         sizes: "192x192",
         type: "image/png",
+        purpose: "any",
       },
       {
         src: "/icon-512.png",
         sizes: "512x512",
         type: "image/png",
+        purpose: "any",
       },
     ],
   };
