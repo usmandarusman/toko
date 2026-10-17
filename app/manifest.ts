@@ -4,8 +4,8 @@ import type { MetadataRoute } from "next";
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
-    name: "Kerupuk Tahu HSM",
-    short_name: "Kerupuk Tahu",
+    name: "IncomeOn",
+    short_name: "IncomeOn",
     description: "Dashboard pengelolaan mitra dan stok Kerupuk Tahu",
     start_url: "/",
     scope: "/",
